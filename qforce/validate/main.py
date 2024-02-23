@@ -1,11 +1,15 @@
 # Standard library imports
 import os
 from types import SimpleNamespace
+import shutil
 
 # Related third-party imports
 import pkg_resources
 from colt import Colt, from_commandline
 from colt.validator import Validator
+
+from .generators import GromacsAnnealing, AnnealerABC, _implemented_generators, _implemented_annealers
+from pprint import pprint
 
 
 def check_if_file_exists(filename):
@@ -35,17 +39,55 @@ settings = :: file, optional, alias=o
 
 # Entry point for the qforce-validate routine
 def run_validator(settings):
-    # read settings from the user provided file
+    # 1. Read settings from the user provided file
     parsed_settings = initialize_settings(settings)
-    # print(parsed_settings)
-    # 1. Read settings
+    print("------ Final settings -------")
+    pprint(parsed_settings)
 
-    # 2. Launch generator
-    #  - if generator is based on gromacs, energies should be stored
+    # 2. If necessary, create generator files
+    # 2.1 scheduler = manual - Just crete the folders and files to launch
+    scheduler = parsed_settings.general.scheduler
+
+    # Create generator working folder
+    generator_folder = f"{parsed_settings.general.job_dir}/{parsed_settings.general.generator_method}"
+    if os.path.exists(generator_folder):
+        shutil.rmtree(generator_folder)
+    os.makedirs(generator_folder)
+
+    annealer = GromacsAnnealing(parsed_settings)
+    # Generate generator input and launching scripts
+    if scheduler == "manual":
+        pass
+    if scheduler == "auto":  # maybe system is better?
+        # 1. generate generator inputs and scripts
+        # 2. launch locally using available resources
+        pass
+    if scheduler == "pbs":
+        # 1. generate generator inputs and scripts
+        # 2. generate generator inputs and scripts
+        # 3. generate queue files
+        # 4. submit to queue
+        # 5. store queue id for dependeny
+        pass
+
+    # 2.2 scheduler = none
+    #  - System settings for MD and QM calculation should be provided (tasks, memory per task)
+
+    # 2.3 scheduler = pbs
+    #  - Scheduler settings for MD and QM calculation should be provided (tasks, memory per task, possibly nodes, queue names)
+
+    # 2.4 scheduler = slurm
+    #  - Scheduler settings for MD and QM calculation should be provided (tasks, memory per task, possibly nodes, queue names)
+
+    # 3. Run generator
+    #  - Run differently based on the scheduler option
 
     # 3. Energy sorting and duplicates removal
 
     # 4. Resampling
+    #  - Two resampling techniques: GROMACS MD and any QM software
+    #  - Simulation settings for MD and QM calculation should be provided
+    #  - Scheduler settings for MD and QM calculation should be provided (tasks, memory per task, possibly nodes, queue names)
 
     pass
 
@@ -66,7 +108,7 @@ topology_file = :: str
 md_settings_file = :: str
 
 #
-generator_method = :: str :: [anneal, anneal_xtb, crest, qcg_microsolv]
+generator_method = :: str :: [annealing, crest, qcg_microsolv]
 
 #
 scheduler = :: str :: [none, manual, pbs, slurm]
@@ -74,23 +116,40 @@ scheduler = :: str :: [none, manual, pbs, slurm]
 
     @staticmethod
     def _set_config(settings):
-        settings.update({key: SimpleNamespace(**val) for key, val in settings.items()})
-        return SimpleNamespace(**settings)
+        # Extracting annealer settings and updating its format
+        annealer_info = settings["annealing"]["annealer"]
+        annealer_name = annealer_info.value
+        annealer_dict = dict(annealer_info)  # Convert Colt object to dict
+        annealer_dict["name"] = annealer_name
+
+        # Converting annealer settings to SimpleNamespace for easier access
+        annealer_settings = SimpleNamespace(**annealer_dict)
+        settings["annealing"].update({"annealer": annealer_settings})  # update colt.questions object
+
+        # Converting all settings to SimpleNamespace for uniformity and ease of use
+        updated_settings = {key: SimpleNamespace(**val) for key, val in settings.items()}
+
+        return SimpleNamespace(**updated_settings)
 
     @classmethod
     def from_config(cls, settings):
         return cls._set_config(settings)
 
-    # @classmethod
-    # def _extend_user_input(cls, questions):
-    #     questions.generate_block("qm", QM.colt_user_input)
-    #     questions.generate_block("scan", DihedralScan.colt_user_input)
-    #     questions.generate_cases(
-    #         "software",
-    #         {key: software.colt_user_input for key, software in implemented_qm_software.items()},
-    #         block="qm",
-    #     )
-    #     questions.generate_block("terms", Terms.get_questions())
+    @classmethod
+    def _extend_user_input(cls, questions):
+        questions.generate_block("annealing", AnnealerABC.colt_user_input)
+        annealers = {
+            annealer_name: annealer_class.colt_user_input for annealer_name, annealer_class in _implemented_annealers()
+        }  # colt_user_input returns the parameters set in the annealer class _user_input class variable e.g. GromacsAnnealer
+
+        questions.generate_cases("annealer", annealers, block="annealing")
+        # questions.generate_block("scan", DihedralScan.colt_user_input)
+        # questions.generate_cases(
+        #     "annealing",
+        #     {key: software.colt_user_input for key, software in implemented_qm_software.items()},
+        #     block="qm",
+        # )
+        # questions.generate_block("terms", Terms.get_questions())
 
 
 def _get_job_info(filename):
@@ -121,10 +180,11 @@ def _check_and_copy_settings_file(job_dir, config_file):
     If options are provided as StringIO, write that to job directory.
     """
 
-    settings_file = os.path.join(job_dir, "settings.ini")
+    settings_file = os.path.join(job_dir, "settings_2.ini")
+    shutil.copy2(config_file, settings_file)
 
     # if config_file is not None:
-    #     if isinstance(config_file, StringIO):
+    #     if isinstance(config_file, StringIO):q
     #         with open(settings_file, "w") as fh:
     #             config_file.seek(0)
     #             fh.write(config_file.read())
@@ -140,8 +200,7 @@ def initialize_settings(config_file, presets=None):
     job_dir = os.getcwd()
     settings_file = _check_and_copy_settings_file(job_dir, config_file)
 
-    settings = GeneralSettings.from_questions(
-        config=settings_file, presets=presets, check_only=True
-    )
+    settings = GeneralSettings.from_questions(config=settings_file, presets=presets, check_only=True)
+    settings.general.job_dir = job_dir
 
     return settings
