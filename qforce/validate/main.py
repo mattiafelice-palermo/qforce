@@ -8,7 +8,8 @@ import pkg_resources
 from colt import Colt, from_commandline
 from colt.validator import Validator
 
-from .generators import GromacsAnnealing, AnnealerABC, _implemented_generators, _implemented_annealers
+from .generators import AnnealerABC, _implemented_generators, _implemented_annealers, get_generator
+from .schedulers import SchedulerABC, get_scheduler
 from pprint import pprint
 
 
@@ -54,12 +55,10 @@ def run_validator(settings):
         shutil.rmtree(generator_folder)
     os.makedirs(generator_folder)
 
-    annealer = GromacsAnnealing(parsed_settings)
-
-    # annealer is passed to scheduler object?
-
-    annealer.generate_input_files(generator_folder)
-    annealer.generate_scripts(generator_folder)
+    generator = get_generator(parsed_settings)
+    scheduler = get_scheduler(parsed_settings)
+    scheduler.add(generator)
+    scheduler.execute()
 
     # Generate generator input and launching scripts
     if scheduler == "manual":
@@ -143,12 +142,17 @@ scheduler = :: str :: [none, manual, pbs, slurm]
 
     @classmethod
     def _extend_user_input(cls, questions):
+        # GENERATORS
         questions.generate_block("annealing", AnnealerABC.colt_user_input)
         annealers = {
             annealer_name: annealer_class.colt_user_input for annealer_name, annealer_class in _implemented_annealers()
         }  # colt_user_input returns the parameters set in the annealer class _user_input class variable e.g. GromacsAnnealer
 
         questions.generate_cases("annealer", annealers, block="annealing")
+
+        # SCHEDULERS
+        questions.generate_block("scheduler", SchedulerABC.colt_user_input)
+
         # questions.generate_block("scan", DihedralScan.colt_user_input)
         # questions.generate_cases(
         #     "annealing",

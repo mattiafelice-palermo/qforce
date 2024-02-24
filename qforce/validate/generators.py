@@ -14,6 +14,34 @@ def _implemented_annealers():
     return annealers.items()
 
 
+def get_generator(settings):
+    """
+    Returns the appropriate generator based on the specified settings.
+
+    Args:
+        settings: The settings object containing the configurations for qforce-validate
+
+    Returns:
+        Generator: An instance of a generator based on the specified method.
+
+    Raises:
+        NotImplementedError: If the generator method specified in the settings is not supported.
+    """
+    generator_method = settings.general.generator_method.lower()
+
+    if generator_method == "annealing":
+        annealer = settings.annealing.annealer.name.lower()
+
+        if annealer == "gromacs":
+            return GromacsAnnealing(settings)
+        elif annealer == "xtb":
+            return XtbAnnealing(settings)
+        else:
+            raise NotImplementedError(f"Annealer '{annealer}' is not implemented.")
+
+    raise NotImplementedError(f"Generator method '{generator_method}' is not implemented.")
+
+
 class AnnealerABC(ABC, Colt):
     _user_input = """
     # 
@@ -78,10 +106,14 @@ class GromacsAnnealing(AnnealerABC):
     # 
     user_mdp_file = annealing.mdp :: str, optional
     gromacs_executable = gmx :: str, optional
+    
+    # e.g. module load gromacs; source /usr/local/gromacs/bin/GMXRC or others
+    custom_directives = module load gromacs :: str, optional
     """
 
     def __init__(self, settings):
         super().__init__(settings)
+        self.generator_folder = f"{settings.general.job_dir}/{settings.general.generator_method}"
         self.mdp_annealing = """; SIMULATED ANNEALING
 ; Type of annealing for each temperature group (no/single/periodic)
 annealing                = single
@@ -98,30 +130,34 @@ gen-temp                 = INITIAL_TEMP"""
 
     # TODO: if not provided by user, use gmx insert-molecule to generate a box whose size is calculated from molecular size
 
-    def generate_scripts(self, generator_folder: str) -> None:
+    def generate_scripts(self) -> None:
         """Generate scripts to launch the calculation"""
-        script_path = os.path.join(generator_folder, "launch.sh")
+        script_path = os.path.join(self.generator_folder, "launch.sh")
+        job_dir = self.settings.general.job_dir
         structure_file = self.settings.general.structure_file
         topology_file = self.settings.general.topology_file
         system_mdp_file = self.settings.annealing.annealer.system_mdp_file
         gromacs_executable = self.settings.annealing.annealer.gromacs_executable
         with open(script_path, "w") as script_handle:
-            script_handle.write("#!/bin/sh\n")
+            script_handle.write("#!/bin/sh\n\n")
+            for directive in self.settings.annealing.annealer.custom_directives.split(";"):
+                script_handle.write(directive + "\n")
             script_handle.write(
-                f"gmx grompp -f {system_mdp_file} -c {structure_file} -p {topology_file} -o annealing &> grompp.out\n"
+                f"gmx grompp -f {system_mdp_file} -c {job_dir}/{structure_file} -p {job_dir}/{topology_file} -o annealing &> grompp.out\n"
             )
+
             script_handle.write(
                 f"{gromacs_executable} mdrun -nt 4 -deffnm annealing -c annealing -tunepme  &> mdrun.out &\n"
             )
 
-    def generate_input_files(self, generator_folder: str) -> None:
+    def generate_input_files(self) -> None:
         """Generate input files by processing MDP settings and copying them to the specified folder.
 
         Args:
             generator_folder (str): The folder where the generated files will be stored.
         """
         self._replace_mdp_placeholders()  # fill annealing mdp section with user selected values
-        self._copy_mdp_file_to_generator_folder(generator_folder)
+        self._copy_mdp_file_to_generator_folder(self.generator_folder)
         self._update_system_mdp_file()  # create the final mdp file for annealing, superseeding some user input
 
     def _replace_mdp_placeholders(self) -> None:
@@ -142,13 +178,14 @@ gen-temp                 = INITIAL_TEMP"""
     def _copy_mdp_file_to_generator_folder(self, generator_folder: str) -> None:
         """Copy the MDP file to the generator folder."""
         user_mdp_filename = os.path.basename(self.settings.annealing.annealer.user_mdp_file)
+        print(user_mdp_filename, generator_folder)
         destination_path = os.path.join(generator_folder, user_mdp_filename)
         shutil.copy2(self.settings.annealing.annealer.user_mdp_file, destination_path)
         self.settings.annealing.annealer.system_mdp_file = destination_path
 
     def _update_system_mdp_file(self) -> None:
         """Update the system MDP file with correct settings."""
-        trj_frequency = self.n_steps / self.n_configs
+        trj_frequency = int(self.n_steps / self.n_configs)
         # If user mistakenly specified gromacs keys related to annealing, remove them
         replacements = {
             "nsteps =": "nsteps".ljust(24) + "= " + f"{self.n_steps}",
