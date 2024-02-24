@@ -59,6 +59,8 @@ def run_validator(settings):
     # annealer is passed to scheduler object?
 
     annealer.generate_input_files(generator_folder)
+    annealer.generate_scripts(generator_folder)
+
     # Generate generator input and launching scripts
     if scheduler == "manual":
         pass
