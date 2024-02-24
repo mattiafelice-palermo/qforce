@@ -55,6 +55,10 @@ def run_validator(settings):
     os.makedirs(generator_folder)
 
     annealer = GromacsAnnealing(parsed_settings)
+
+    # annealer is passed to scheduler object?
+
+    annealer.generate_input_files(generator_folder)
     # Generate generator input and launching scripts
     if scheduler == "manual":
         pass
@@ -180,7 +184,7 @@ def _check_and_copy_settings_file(job_dir, config_file):
     If options are provided as StringIO, write that to job directory.
     """
 
-    settings_file = os.path.join(job_dir, "settings_2.ini")
+    settings_file = os.path.join(job_dir, ".settings.parsed.ini")
     shutil.copy2(config_file, settings_file)
 
     # if config_file is not None:
