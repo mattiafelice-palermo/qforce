@@ -42,11 +42,6 @@ settings = :: file, optional, alias=o
 def run_validator(settings):
     # 1. Read settings from the user provided file
     parsed_settings = initialize_settings(settings)
-    print("------ Final settings -------")
-    pprint(parsed_settings)
-
-    # 2. If necessary, create generator files
-    # 2.1 scheduler = manual - Just crete the folders and files to launch
 
     # Create generator working folder
     generator_folder = f"{parsed_settings.general.job_dir}/{parsed_settings.general.generator_method}"
@@ -115,7 +110,7 @@ md_settings_file = :: str
 generator_method = :: str :: [annealing, crest, qcg_microsolv]
 
 #
-scheduler = :: str :: [none, system, pbs, slurm]
+scheduler = :: str :: [manual, system, pbs, slurm]
 """
 
     @staticmethod

@@ -105,8 +105,7 @@ class ManualScheduler(SchedulerABC):
 
     def execute(self):
         for job in self._jobs:
-            job.generate_input_files()
-            job.generate_scripts()
+            job.run(dry_run=True)
 
 
 class SystemScheduler(SchedulerABC):
@@ -114,6 +113,4 @@ class SystemScheduler(SchedulerABC):
 
     def execute(self):
         for job in self._jobs:
-            job.generate_input_files()
-            job.generate_scripts()
             job.run()

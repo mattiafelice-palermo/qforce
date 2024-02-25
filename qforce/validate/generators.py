@@ -71,7 +71,7 @@ class AnnealerABC(ABC, Colt):
         self._job_type = "generator"
 
     @abstractmethod
-    def generate_input_files(self): ...
+    def run(self): ...
 
     @property
     def t_min(self):
@@ -158,7 +158,7 @@ gen-temp                 = INITIAL_TEMP"""
         shutil.copy2(self.settings.annealing.annealer.user_mdp_file, destination_path)
         self.settings.annealing.annealer.system_mdp_file = destination_path
 
-    def generate_scripts(self) -> None:
+    def _generate_scripts(self) -> None:
         """Generate scripts to launch the calculation"""
         # Assign settings to local variables for increased readability
         script_path = os.path.join(self.generator_folder, "launch.sh")
@@ -203,7 +203,7 @@ gen-temp                 = INITIAL_TEMP"""
                 f"echo 0 | {gromacs_executable} trjconv -f annealing.trr -s annealing.tpr -o {conformers_path}"
             )
 
-    def generate_input_files(self) -> None:
+    def _generate_input_files(self) -> None:
         """Generate input files by processing MDP settings and copying them to the specified folder.
 
         Args:
@@ -274,16 +274,19 @@ gen-temp                 = INITIAL_TEMP"""
         with open(self.settings.annealing.annealer.system_mdp_file, "w") as file:
             file.writelines(system_mdp_lines)
 
-    def run(self) -> None:
+    def run(self, dry_run=False) -> None:
+        self._generate_input_files()
+        self._generate_scripts()
 
-        try:
-            mdrun = subprocess.Popen(
-                ["bash", "launch.sh"], cwd=self.generator_folder, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
-            )
+        if not dry_run:
+            try:
+                mdrun = subprocess.Popen(
+                    ["bash", "launch.sh"], cwd=self.generator_folder, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+                )
 
-            mdrun.wait()
-        except Exception as e:
-            print("Failed to run annealing run.\n", e)
+                mdrun.wait()
+            except Exception as e:
+                print("Failed to run annealing run.\n", e)
 
 
 class XtbAnnealing(AnnealerABC):
