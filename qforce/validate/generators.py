@@ -135,8 +135,28 @@ annealing_temp           = ANNEALING_TEMP
 ; GENERATE VELOCITIES FOR STARTUP RUN
 gen-vel                  = yes
 gen-temp                 = INITIAL_TEMP"""
+        self._setup_working_folder()
 
     # TODO: if not provided by user, use gmx insert-molecule to generate a box whose size is calculated from molecular size
+
+    def _setup_working_folder(self):
+        # Create generator working folder
+        generator_folder = self.generator_folder
+        if os.path.exists(generator_folder):
+            shutil.rmtree(generator_folder)
+        os.makedirs(generator_folder)
+
+        # Copy necessary files
+        shutil.copy2(f"{self.settings.general.job_dir}/{self.settings.general.structure_file}", generator_folder)
+        shutil.copy2(f"{self.settings.general.job_dir}/{self.settings.general.topology_file}", generator_folder)
+        self._copy_mdp_file_to_generator_folder(generator_folder)
+
+    def _copy_mdp_file_to_generator_folder(self, generator_folder: str) -> None:
+        """Copy the MDP file to the generator folder."""
+        user_mdp_filename = os.path.basename(self.settings.annealing.annealer.user_mdp_file)
+        destination_path = os.path.join(generator_folder, "annealing.mdp")
+        shutil.copy2(self.settings.annealing.annealer.user_mdp_file, destination_path)
+        self.settings.annealing.annealer.system_mdp_file = destination_path
 
     def generate_scripts(self) -> None:
         """Generate scripts to launch the calculation"""
@@ -145,7 +165,6 @@ gen-temp                 = INITIAL_TEMP"""
         job_dir = self.settings.general.job_dir
         structure_file = self.settings.general.structure_file
         topology_file = self.settings.general.topology_file
-        system_mdp_file = self.settings.annealing.annealer.system_mdp_file
         gromacs_executable = self.settings.annealing.annealer.gromacs_executable
 
         # Managing the pool folder creation here.. awkward, but it works
@@ -173,7 +192,7 @@ gen-temp                 = INITIAL_TEMP"""
             for directive in self.settings.annealing.annealer.custom_directives.split(";"):
                 script_handle.write(directive + "\n")
             script_handle.write(
-                f"gmx grompp -f {system_mdp_file} -c {job_dir}/{structure_file} -p {job_dir}/{topology_file} -o annealing &> grompp.out\n"
+                f"gmx grompp -f annealing.mdp -c {structure_file} -p {topology_file} -o annealing &> grompp.out\n"
             )
 
             script_handle.write(
@@ -181,7 +200,7 @@ gen-temp                 = INITIAL_TEMP"""
             )
 
             script_handle.write(
-                f"echo 0 | {gromacs_executable} trjconv -f annealing.trr -s annealing.tpr -sep -o {conformers_path}"
+                f"echo 0 | {gromacs_executable} trjconv -f annealing.trr -s annealing.tpr -o {conformers_path}"
             )
 
     def generate_input_files(self) -> None:
@@ -191,7 +210,6 @@ gen-temp                 = INITIAL_TEMP"""
             generator_folder (str): The folder where the generated files will be stored.
         """
         self._replace_mdp_placeholders()  # fill annealing mdp section with user selected values
-        self._copy_mdp_file_to_generator_folder(self.generator_folder)
         self._update_system_mdp_file()  # create the final mdp file for annealing, superseeding some user input
 
     def _replace_mdp_placeholders(self) -> None:
@@ -209,14 +227,6 @@ gen-temp                 = INITIAL_TEMP"""
         for key, value in replacements.items():
             self.mdp_annealing = self.mdp_annealing.replace(key, value)
 
-    def _copy_mdp_file_to_generator_folder(self, generator_folder: str) -> None:
-        """Copy the MDP file to the generator folder."""
-        user_mdp_filename = os.path.basename(self.settings.annealing.annealer.user_mdp_file)
-        print(user_mdp_filename, generator_folder)
-        destination_path = os.path.join(generator_folder, user_mdp_filename)
-        shutil.copy2(self.settings.annealing.annealer.user_mdp_file, destination_path)
-        self.settings.annealing.annealer.system_mdp_file = destination_path
-
     def _update_system_mdp_file(self) -> None:
         """Update the system MDP file with correct settings."""
         trj_frequency = int(self.n_steps / self.n_configs)
@@ -225,6 +235,7 @@ gen-temp                 = INITIAL_TEMP"""
             "nsteps =": "nsteps".ljust(24) + "= " + f"{self.n_steps}",
             "dt =": "dt".ljust(24) + "= " + f"{self.dt}",
             "nstxout =": "nstxout".ljust(24) + "= " + f"{trj_frequency}",
+            "nstenergy =": "nstenergy".ljust(24) + "= " + f"{trj_frequency}",
             "annealing =": "",
             "annealing_npoints =": "",
             "annealing_temp =": "",
