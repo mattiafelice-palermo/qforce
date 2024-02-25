@@ -9,6 +9,8 @@ from colt import Colt, from_commandline
 from colt.validator import Validator
 
 from .generators import AnnealerABC, _implemented_generators, _implemented_annealers, get_generator
+from .calculators import Orca, get_calculator
+from .archive import split_pdb_to_xyz
 from .schedulers import SchedulerABC, get_scheduler
 from pprint import pprint
 
@@ -53,6 +55,17 @@ def run_validator(settings):
     scheduler = get_scheduler(parsed_settings)
     scheduler.add(generator)
     scheduler.execute()
+
+    parsed_settings.general.pool_path = os.path.join(parsed_settings.general.job_dir, "pool")
+    split_pdb_to_xyz(generator.structures_path, parsed_settings.general.pool_path)
+
+    calculator = get_calculator(parsed_settings)
+    calculator.run()
+
+    # Conformer filtering, ordering and univocal storing
+    pass
+
+    # resampling
 
     # Generate generator input and launching scripts
     if scheduler == "manual":
@@ -110,6 +123,9 @@ md_settings_file = :: str
 generator_method = :: str :: [annealing, crest, qcg_microsolv]
 
 #
+calculator = :: str ::[orca]
+
+#
 scheduler = :: str :: [manual, system, pbs, slurm]
 """
 
@@ -146,6 +162,9 @@ scheduler = :: str :: [manual, system, pbs, slurm]
 
         # SCHEDULERS
         questions.generate_block("scheduler", SchedulerABC.colt_user_input)
+
+        # CALCULATORS
+        questions.generate_block("orca", Orca.colt_user_input)
 
         # questions.generate_block("scan", DihedralScan.colt_user_input)
         # questions.generate_cases(

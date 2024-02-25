@@ -70,8 +70,14 @@ class AnnealerABC(ABC, Colt):
         self._n_configs = settings.annealing.n_configs
         self._job_type = "generator"
 
+        settings.general.number_of_structures = settings.annealing.n_configs
+
     @abstractmethod
     def run(self): ...
+
+    @property
+    @abstractmethod
+    def structures_path(self): ...
 
     @property
     def t_min(self):
@@ -136,6 +142,8 @@ annealing_temp           = ANNEALING_TEMP
 gen-vel                  = yes
 gen-temp                 = INITIAL_TEMP"""
         self._setup_working_folder()
+        self.total_threads = self.settings.annealing.annealer.threads
+        self._structures_path = None
 
     # TODO: if not provided by user, use gmx insert-molecule to generate a box whose size is calculated from molecular size
 
@@ -162,7 +170,6 @@ gen-temp                 = INITIAL_TEMP"""
         """Generate scripts to launch the calculation"""
         # Assign settings to local variables for increased readability
         script_path = os.path.join(self.generator_folder, "launch.sh")
-        job_dir = self.settings.general.job_dir
         structure_file = self.settings.general.structure_file
         topology_file = self.settings.general.topology_file
         gromacs_executable = self.settings.annealing.annealer.gromacs_executable
@@ -172,7 +179,6 @@ gen-temp                 = INITIAL_TEMP"""
         if os.path.exists(pool_path):
             shutil.rmtree(pool_path)
         os.makedirs(pool_path)
-        conformers_path = os.path.join(pool_path, "conformer.pdb")
 
         # Manage number of threads and custom gromacs flags
         if self.settings.annealing.annealer.threads == -1:
@@ -199,8 +205,10 @@ gen-temp                 = INITIAL_TEMP"""
                 f"{gromacs_executable} mdrun -nt {threads} -deffnm annealing -c annealing {custom_gmx_flags} &> mdrun.out\n"
             )
 
+            # script_handle.write(f"echo 9 |  {gromacs_executable} energy -f annealing.edr -o annealing")
+
             script_handle.write(
-                f"echo 0 | {gromacs_executable} trjconv -f annealing.trr -s annealing.tpr -o {conformers_path}"
+                f"echo 0 | {gromacs_executable} trjconv -f annealing.trr -s annealing.tpr -o annealing.pdb"
             )
 
     def _generate_input_files(self) -> None:
@@ -287,6 +295,16 @@ gen-temp                 = INITIAL_TEMP"""
                 mdrun.wait()
             except Exception as e:
                 print("Failed to run annealing run.\n", e)
+
+        self.structures_path = os.path.join(self.generator_folder, "annealing.pdb")
+
+    @property
+    def structures_path(self):
+        return self._structures_path
+
+    @structures_path.setter
+    def structures_path(self, argument):
+        self._structures_path = argument
 
 
 class XtbAnnealing(AnnealerABC):
