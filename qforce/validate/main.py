@@ -47,7 +47,6 @@ def run_validator(settings):
 
     # 2. If necessary, create generator files
     # 2.1 scheduler = manual - Just crete the folders and files to launch
-    scheduler = parsed_settings.general.scheduler
 
     # Create generator working folder
     generator_folder = f"{parsed_settings.general.job_dir}/{parsed_settings.general.generator_method}"
@@ -116,7 +115,7 @@ md_settings_file = :: str
 generator_method = :: str :: [annealing, crest, qcg_microsolv]
 
 #
-scheduler = :: str :: [none, manual, pbs, slurm]
+scheduler = :: str :: [none, system, pbs, slurm]
 """
 
     @staticmethod

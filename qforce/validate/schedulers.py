@@ -44,7 +44,7 @@ def get_scheduler(settings):
     if scheduler == "manual":
         return ManualScheduler(settings)
     elif scheduler == "system":
-        pass
+        return SystemScheduler(settings)
     elif scheduler == "pbs":
         pass
     elif scheduler == "slurm":
@@ -107,3 +107,13 @@ class ManualScheduler(SchedulerABC):
         for job in self._jobs:
             job.generate_input_files()
             job.generate_scripts()
+
+
+class SystemScheduler(SchedulerABC):
+    """Just instruct generators and resamplers to write input files and launch scripts to disk."""
+
+    def execute(self):
+        for job in self._jobs:
+            job.generate_input_files()
+            job.generate_scripts()
+            job.run()

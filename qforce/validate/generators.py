@@ -2,6 +2,7 @@ from colt import Colt
 from abc import ABC, abstractmethod
 import shutil
 import os
+import subprocess
 
 from pprint import pprint
 
@@ -109,6 +110,13 @@ class GromacsAnnealing(AnnealerABC):
     
     # e.g. module load gromacs; source /usr/local/gromacs/bin/GMXRC or others
     custom_directives = module load gromacs :: str, optional
+
+    # -1 uses all the available threads
+    threads = -1 :: int, optional
+
+    #
+    custom_gmx_flags = :: str, optional
+
     """
 
     def __init__(self, settings):
@@ -132,12 +140,34 @@ gen-temp                 = INITIAL_TEMP"""
 
     def generate_scripts(self) -> None:
         """Generate scripts to launch the calculation"""
+        # Assign settings to local variables for increased readability
         script_path = os.path.join(self.generator_folder, "launch.sh")
         job_dir = self.settings.general.job_dir
         structure_file = self.settings.general.structure_file
         topology_file = self.settings.general.topology_file
         system_mdp_file = self.settings.annealing.annealer.system_mdp_file
         gromacs_executable = self.settings.annealing.annealer.gromacs_executable
+
+        # Managing the pool folder creation here.. awkward, but it works
+        pool_path = os.path.join(self.settings.general.job_dir, "pool")
+        if os.path.exists(pool_path):
+            shutil.rmtree(pool_path)
+        os.makedirs(pool_path)
+        conformers_path = os.path.join(pool_path, "conformer.pdb")
+
+        # Manage number of threads and custom gromacs flags
+        if self.settings.annealing.annealer.threads == -1:
+            threads = os.cpu_count()
+            self.settings.annealing.annealer.threads = threads
+        else:
+            threads = self.settings.annealing.annealer.threads
+
+        if self.settings.annealing.annealer.custom_gmx_flags == None:
+            custom_gmx_flags = ""
+        else:
+            custom_gmx_flags = self.settings.annealing.annealer.custom_gmx_flags
+
+        # Write the composed script to the launch.sh file
         with open(script_path, "w") as script_handle:
             script_handle.write("#!/bin/sh\n\n")
             for directive in self.settings.annealing.annealer.custom_directives.split(";"):
@@ -147,7 +177,11 @@ gen-temp                 = INITIAL_TEMP"""
             )
 
             script_handle.write(
-                f"{gromacs_executable} mdrun -nt 4 -deffnm annealing -c annealing -tunepme  &> mdrun.out &\n"
+                f"{gromacs_executable} mdrun -nt {threads} -deffnm annealing -c annealing {custom_gmx_flags} &> mdrun.out\n"
+            )
+
+            script_handle.write(
+                f"echo 0 | {gromacs_executable} trjconv -f annealing.trr -s annealing.tpr -sep -o {conformers_path}"
             )
 
     def generate_input_files(self) -> None:
@@ -228,6 +262,17 @@ gen-temp                 = INITIAL_TEMP"""
 
         with open(self.settings.annealing.annealer.system_mdp_file, "w") as file:
             file.writelines(system_mdp_lines)
+
+    def run(self) -> None:
+
+        try:
+            mdrun = subprocess.Popen(
+                ["bash", "launch.sh"], cwd=self.generator_folder, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+            )
+
+            mdrun.wait()
+        except Exception as e:
+            print("Failed to run annealing run.\n", e)
 
 
 class XtbAnnealing(AnnealerABC):
