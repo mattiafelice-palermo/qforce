@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 import shutil
 import os
 import textwrap
+import subprocess
 
 from pprint import pprint
 
@@ -62,10 +63,10 @@ class Orca(CalculatorABC, Colt):
     orca_executable = orca :: str, optional
 
     # list of modules to be loaded (semicolon separated)
-    load_modules = :: str, optional
+    modules = :: str, optional
 
     # list of path variable and path to be prepended in the format SOMEVARIABLEPATH: SOMEPATH (semicolon separated)
-    # example: PATH: /usr/lib64/openmpi/bin; LD_LIBRARY_PATH: /usr/lib64/openmpi/lib:$LD_LIBRARY_PATH
+    # example: PATH: /usr/lib64/openmpi/bin; LD_LIBRARY_PATH: /usr/lib64/openmpi/lib
     exports = :: str, optional
 
     """
@@ -81,11 +82,29 @@ class Orca(CalculatorABC, Colt):
         self.single_calculation_threads = settings.orca.single_calculation_threads
         self.orca_executable = settings.orca.orca_executable
         self.calculator_folder = os.path.join(self.settings.general.job_dir, self.settings.general.calculator)
+        self.modules_string = build_modules_string(settings.orca.modules)
+        print(f"'{self.modules_string}'")
+        self.exports_string = build_exports_string(settings.orca.exports)
+
+        print(f"'{self.exports_string}'")
 
     def run(self, dry_run=False):
         self._setup_working_folder()
         self._generate_orca_template()
         self._generate_launch_script()
+
+        if not dry_run:
+            try:
+                run_orca = subprocess.Popen(
+                    ["python", "dispatcher.py"],
+                    cwd=self.calculator_folder,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                )
+
+                run_orca.wait()
+            except Exception as e:
+                print("Failed to run Orca calculator.\n", e)
 
     def _setup_working_folder(self):
         # Create generator working folder
@@ -121,7 +140,7 @@ class Orca(CalculatorABC, Colt):
             xyz_path = os.path.join("{self.settings.general.pool_path}", f"{{filename}}.xyz")
             subprocess.run(f"sed -i 's#FILENAME#{{xyz_path}}#g' {{filename}}.inp", shell=True, cwd=folder_name)
 
-            result = subprocess.run(f'export PATH="/usr/lib64/openmpi/bin:$PATH" && export LD_LIBRARY_PATH="/usr/lib64/openmpi/lib:$LD_LIBRARY_PATH" && $(which orca) {{filename}}.inp > {{filename}}.out 2> {{filename}}.err', shell=True, cwd=folder_name)
+            result = subprocess.run(f'{self.modules_string}{self.exports_string}$(which orca) {{filename}}.inp > {{filename}}.out 2> {{filename}}.err', shell=True, cwd=folder_name)
 
             return result.stdout
 
@@ -160,3 +179,41 @@ class Orca(CalculatorABC, Colt):
 
         with open(orca_input_path, "w") as orca_input_handle:
             orca_input_handle.write(template_string)
+
+
+def build_exports_string(input_string):
+    # Check for None or empty input
+    if not input_string:
+        return ""
+
+    # Split the input string into pairs
+    pairs = input_string.split(";")
+
+    # Initialize an empty list for export statements
+    exports_string = ""
+
+    for pair in pairs:
+        # Split each pair by ':' and strip white spaces
+        if ":" in pair:
+            key, value = pair.split(":", 1)
+            key = key.strip()
+            value = value.strip()
+            exports_string += f"export {key}={value} && "
+
+    return exports_string
+
+
+def build_modules_string(input_string):
+    # Check for None or empty input
+    if not input_string:
+        return ""
+
+    # Split the string into pairs
+    modules = input_string.split(";")
+
+    modules_string = ""
+
+    for module in modules:
+        modules_string += f"module load {module.strip()} && "
+
+    return modules_string
