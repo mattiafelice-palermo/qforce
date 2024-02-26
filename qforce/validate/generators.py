@@ -59,6 +59,9 @@ class AnnealerABC(ABC, Colt):
 
     # number of configurations
     n_configs = 1000 :: int
+
+    #
+    queue = :: str, optional
     """
 
     def __init__(self, settings):
@@ -69,6 +72,7 @@ class AnnealerABC(ABC, Colt):
         self._dt = settings.annealing.dt
         self._n_configs = settings.annealing.n_configs
         self._job_type = "generator"
+        self.queue = settings.annealing.queue
 
         settings.general.number_of_structures = settings.annealing.n_configs
 
@@ -121,6 +125,9 @@ class GromacsAnnealing(AnnealerABC):
     threads = -1 :: int, optional
 
     #
+    total_memory = :: int, optional
+
+    #
     custom_gmx_flags = :: str, optional
 
     """
@@ -128,6 +135,7 @@ class GromacsAnnealing(AnnealerABC):
     def __init__(self, settings):
         super().__init__(settings)
         self.generator_folder = f"{settings.general.job_dir}/{settings.general.generator_method}"
+        self.job_dir = self.generator_folder
         self.mdp_annealing = """; SIMULATED ANNEALING
 ; Type of annealing for each temperature group (no/single/periodic)
 annealing                = single
@@ -144,6 +152,8 @@ gen-temp                 = INITIAL_TEMP"""
         self._setup_working_folder()
         self.total_threads = self.settings.annealing.annealer.threads
         self._structures_path = None
+        self.total_memory = settings.annealing.annealer.total_memory
+        self.launch_command = "bash launch.sh"
 
     # TODO: if not provided by user, use gmx insert-molecule to generate a box whose size is calculated from molecular size
 

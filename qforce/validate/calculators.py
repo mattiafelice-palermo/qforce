@@ -69,6 +69,9 @@ class Orca(CalculatorABC, Colt):
     # example: PATH: /usr/lib64/openmpi/bin; LD_LIBRARY_PATH: /usr/lib64/openmpi/lib
     exports = :: str, optional
 
+    #
+    queue = :: str, optional
+
     """
 
     def __init__(self, settings):
@@ -83,10 +86,9 @@ class Orca(CalculatorABC, Colt):
         self.orca_executable = settings.orca.orca_executable
         self.calculator_folder = os.path.join(self.settings.general.job_dir, self.settings.general.calculator)
         self.modules_string = build_modules_string(settings.orca.modules)
-        print(f"'{self.modules_string}'")
         self.exports_string = build_exports_string(settings.orca.exports)
-
-        print(f"'{self.exports_string}'")
+        self.launch_command = "python dispatcher.py"
+        self.queue = settings.general.orca.queue
 
     def run(self, dry_run=False):
         self._setup_working_folder()
