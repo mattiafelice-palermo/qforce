@@ -5,7 +5,11 @@ import shutil
 
 def split_pdb_to_xyz(pdb_file_path, destination_folder_path):
     # Open the PDB file
-    molecules = pybel.readfile("pdb", pdb_file_path)
+    try:
+        molecules = pybel.readfile("pdb", pdb_file_path)
+    except:
+        print(f"The file {pdb_file_path} does not exist.")
+        raise FileNotFoundError(f"Structures file does not exist: {pdb_file_path}")
 
     if os.path.exists(destination_folder_path):
         shutil.rmtree(destination_folder_path)

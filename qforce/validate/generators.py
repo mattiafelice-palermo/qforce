@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 import shutil
 import os
 import subprocess
-
+import textwrap
 from pprint import pprint
 
 _implemented_generators = ["annealing", "crest", "qcg"]
@@ -127,6 +127,9 @@ class GromacsAnnealing(AnnealerABC):
     #
     total_memory = :: int, optional
 
+
+    #
+    queue = :: str, optional
     #
     custom_gmx_flags = :: str, optional
 
@@ -136,24 +139,28 @@ class GromacsAnnealing(AnnealerABC):
         super().__init__(settings)
         self.generator_folder = f"{settings.general.job_dir}/{settings.general.generator_method}"
         self.job_dir = self.generator_folder
-        self.mdp_annealing = """; SIMULATED ANNEALING
-; Type of annealing for each temperature group (no/single/periodic)
-annealing                = single
-; Number of time points to use for specifying annealing in each group
-annealing_npoints        = 2
-; List of times at the annealing points for each group
-annealing_time           = 0 ANNEALING_TIME
-; Temp. at each annealing point, for each group.
-annealing_temp           = ANNEALING_TEMP
-
-; GENERATE VELOCITIES FOR STARTUP RUN
-gen-vel                  = yes
-gen-temp                 = INITIAL_TEMP"""
-        self._setup_working_folder()
         self.total_threads = self.settings.annealing.annealer.threads
         self._structures_path = None
         self.total_memory = settings.annealing.annealer.total_memory
+        self.queue = settings.annealing.annealer.queue
         self.launch_command = "bash launch.sh"
+        self._setup_working_folder()
+
+        self.mdp_annealing = textwrap.dedent(
+            """; SIMULATED ANNEALING
+            ; Type of annealing for each temperature group (no/single/periodic)
+            annealing                = single
+            ; Number of time points to use for specifying annealing in each group
+            annealing_npoints        = 2
+            ; List of times at the annealing points for each group
+            annealing_time           = 0 ANNEALING_TIME
+            ; Temp. at each annealing point, for each group.
+            annealing_temp           = ANNEALING_TEMP
+
+            ; GENERATE VELOCITIES FOR STARTUP RUN
+            gen-vel                  = yes
+            gen-temp                 = INITIAL_TEMP"""
+        )
 
     # TODO: if not provided by user, use gmx insert-molecule to generate a box whose size is calculated from molecular size
 
@@ -208,11 +215,11 @@ gen-temp                 = INITIAL_TEMP"""
             for directive in self.settings.annealing.annealer.custom_directives.split(";"):
                 script_handle.write(directive + "\n")
             script_handle.write(
-                f"gmx grompp -f annealing.mdp -c {structure_file} -p {topology_file} -o annealing &> grompp.out\n"
+                f"gmx grompp -f annealing.mdp -c {structure_file} -p {topology_file} -o annealing > grompp.out 2> grompp.err\n"
             )
 
             script_handle.write(
-                f"{gromacs_executable} mdrun -nt {threads} -deffnm annealing -c annealing {custom_gmx_flags} &> mdrun.out\n"
+                f"{gromacs_executable} mdrun -nt {threads} -deffnm annealing -c annealing {custom_gmx_flags} > mdrun.out 2> mdrun.err\n"
             )
 
             # script_handle.write(f"echo 9 |  {gromacs_executable} energy -f annealing.edr -o annealing")
@@ -298,9 +305,8 @@ gen-temp                 = INITIAL_TEMP"""
 
         if not dry_run:
             try:
-                mdrun = subprocess.Popen(
-                    ["bash", "launch.sh"], cwd=self.generator_folder, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
-                )
+                # TODO: launch command should be taken from the generator attribute
+                mdrun = subprocess.Popen(["bash", "launch.sh"], cwd=self.generator_folder)
 
                 mdrun.wait()
             except Exception as e:

@@ -57,10 +57,15 @@ def run_validator(settings):
     scheduler.execute()
 
     parsed_settings.general.pool_path = os.path.join(parsed_settings.general.job_dir, "pool")
+
     split_pdb_to_xyz(generator.structures_path, parsed_settings.general.pool_path)
 
+    if generator.structures_path is None:
+        raise RuntimeError("No structures to resample has been found.")
+
     calculator = get_calculator(parsed_settings)
-    calculator.run()
+    scheduler.add(calculator)
+    scheduler.execute()
 
     # Conformer filtering, ordering and univocal storing
     pass

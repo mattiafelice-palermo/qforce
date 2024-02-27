@@ -88,7 +88,8 @@ class Orca(CalculatorABC, Colt):
         self.modules_string = build_modules_string(settings.orca.modules)
         self.exports_string = build_exports_string(settings.orca.exports)
         self.launch_command = "python dispatcher.py"
-        self.queue = settings.general.orca.queue
+        self.queue = settings.orca.queue
+        self.job_dir = self.calculator_folder  # just for the schedulers
 
     def run(self, dry_run=False):
         self._setup_working_folder()
@@ -96,6 +97,7 @@ class Orca(CalculatorABC, Colt):
         self._generate_launch_script()
 
         if not dry_run:
+            print("Running in system!")
             try:
                 run_orca = subprocess.Popen(
                     ["python", "dispatcher.py"],
