@@ -172,6 +172,15 @@ class SlurmScheduler(SchedulerABC):
             cd $SLURM_SUBMIT_DIR
             rm -rf $SCRDIR
             """
+        if job.queue:
+            queue_string = f"#SBATCH --partition={job.queue}"
+        else:
+            queue_string = ""
+
+        if job.conda_environment is None:
+            source_conda_env_string = ""
+        else:
+            source_conda_env_string = f"source activate {job.conda_environment}"
 
         if self.scratch_dir is None:
             scratch_partition_management_pre = ""
@@ -188,12 +197,13 @@ class SlurmScheduler(SchedulerABC):
             ##SBATCH --nodes=1                     # CURRENTLY UNSUPPORTED
             #SBATCH --ntasks-per-node={job.total_threads}       # number of tasks per node. Equivalent to ppn in TORQUE
             ##SBATCH --time=5-00:00:00                # CURRENTLY UNSUPPORTED
-            #SBATCH --partition={job.queue}
+            {queue_string}
             {job_memory_string}
             #SBATCH --job-name={self.settings.general.calculator}         # name of your job.
             
-            set -e
+            set +x
 
+            {source_conda_env_string}
             {scratch_partition_management_pre}{job.launch_command} > output.out 2> error.err
             {scratch_partition_management_post}
             """
@@ -209,12 +219,12 @@ class PbsScheduler(SchedulerABC):
     def execute(self):
         job_ids = []
 
-        if not all([job.queue for job in self._pending_jobs]):
-            # TODO: provide a more specific error pointing to which job is lacking a queue
-            raise ValueError(
-                "Jobs are missing a work queue."
-                "Please make sure that all generators and calculators have a set work queue when using the PBS scheduler"
-            )
+        # if not all([job.queue for job in self._pending_jobs]):
+        #     # TODO: provide a more specific error pointing to which job is lacking a queue
+        #     raise ValueError(
+        #         "Jobs are missing a work queue."
+        #         "Please make sure that all generators and calculators have a set work queue when using the PBS scheduler"
+        #     )
 
         for job in self._pending_jobs:
             job.run(dry_run=True)
@@ -224,7 +234,7 @@ class PbsScheduler(SchedulerABC):
                 pbs_file_handle.write(self._pbs_script_content(job))
 
             job_id = subprocess.run(
-                "qsub -terse submit_job.pbs'", cwd=job_dir, shell=True, capture_output=True, text=True
+                "qsub submit_job.pbs", cwd=job_dir, shell=True, capture_output=True, text=True, check=True
             )
             print(job_id)
             job_ids.append(job_id.stdout.strip("\n"))
@@ -232,9 +242,7 @@ class PbsScheduler(SchedulerABC):
         job_string = ":".join([f"{job_id}" for job_id in job_ids])
 
         print(job_string)
-        dummy_job = subprocess.run(
-            f"echo 'done' | qsub -W block=True depend=afterany:{job_string} --wrap='sleep 1'", shell=True
-        )
+        dummy_job = subprocess.run(f"echo 'done' | qsub -W block=True,depend=afterany:{job_string}", shell=True)
 
         # Once completed, move the jobs out of the pending job list
         while self._pending_jobs:
@@ -266,6 +274,15 @@ class PbsScheduler(SchedulerABC):
             cd $PBS_O_WORKDIR
             rm -rf $SCRDIR
             """
+        if job.queue:
+            queue_string = f"#PBS -q {job.queue}"
+        else:
+            queue_string = ""
+
+        if job.conda_environment is None:
+            source_conda_env_string = ""
+        else:
+            source_conda_env_string = f"source activate {job.conda_environment}"
 
         if self.scratch_dir is None:
             scratch_partition_management_pre = ""
@@ -280,13 +297,13 @@ class PbsScheduler(SchedulerABC):
             f"""\
             #!/usr/bin/env bash
             #PBS -l nodes=1:ppn={job.total_threads}
-            #SBATCH --ntasks-per-node={job.total_threads}       # number of tasks per node. Equivalent to ppn in TORQUE
-            #PBS -q {job.queue}
+            {queue_string}
             {job_memory_string}
-            #PBS -N {self.settings.general.calculator}         # name of your job.
+            ##PBS -N {self.settings.general.calculator}         # name of your job.
             
             set -e
 
+            {source_conda_env_string}
             {scratch_partition_management_pre}{job.launch_command} > output.out 2> error.err
             {scratch_partition_management_post}
             """

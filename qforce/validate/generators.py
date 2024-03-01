@@ -133,6 +133,9 @@ class GromacsAnnealing(AnnealerABC):
     #
     custom_gmx_flags = :: str, optional
 
+    #
+    conda_environment = :: str, optional
+
     """
 
     def __init__(self, settings):
@@ -144,6 +147,16 @@ class GromacsAnnealing(AnnealerABC):
         self.total_memory = settings.annealing.annealer.total_memory
         self.queue = settings.annealing.annealer.queue
         self.launch_command = "bash launch.sh"
+        self.conda_environment = settings.annealing.annealer.conda_environment
+
+        # Manage number of threads and custom gromacs flags
+        if self.settings.annealing.annealer.threads == -1:
+            threads = os.cpu_count()
+            self.settings.annealing.annealer.threads = threads
+            self.total_threads = threads
+        else:
+            threads = self.settings.annealing.annealer.threads
+
         self._setup_working_folder()
 
         self.mdp_annealing = textwrap.dedent(
@@ -197,13 +210,6 @@ class GromacsAnnealing(AnnealerABC):
             shutil.rmtree(pool_path)
         os.makedirs(pool_path)
 
-        # Manage number of threads and custom gromacs flags
-        if self.settings.annealing.annealer.threads == -1:
-            threads = os.cpu_count()
-            self.settings.annealing.annealer.threads = threads
-        else:
-            threads = self.settings.annealing.annealer.threads
-
         if self.settings.annealing.annealer.custom_gmx_flags == None:
             custom_gmx_flags = ""
         else:
@@ -219,7 +225,7 @@ class GromacsAnnealing(AnnealerABC):
             )
 
             script_handle.write(
-                f"{gromacs_executable} mdrun -nt {threads} -deffnm annealing -c annealing {custom_gmx_flags} > mdrun.out 2> mdrun.err\n"
+                f"{gromacs_executable} mdrun -nt {self.total_threads} -deffnm annealing -c annealing {custom_gmx_flags} > mdrun.out 2> mdrun.err\n"
             )
 
             # script_handle.write(f"echo 9 |  {gromacs_executable} energy -f annealing.edr -o annealing")

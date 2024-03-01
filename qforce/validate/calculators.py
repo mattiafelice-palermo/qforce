@@ -72,6 +72,9 @@ class Orca(CalculatorABC, Colt):
     #
     queue = :: str, optional
 
+    #
+    conda_environment = ::str, optional
+
     """
 
     def __init__(self, settings):
@@ -89,6 +92,7 @@ class Orca(CalculatorABC, Colt):
         self.exports_string = build_exports_string(settings.orca.exports)
         self.launch_command = "python dispatcher.py"
         self.queue = settings.orca.queue
+        self.conda_environment = settings.orca.conda_environment
         self.job_dir = self.calculator_folder  # just for the schedulers
 
     def run(self, dry_run=False):
@@ -142,10 +146,12 @@ class Orca(CalculatorABC, Colt):
             folder_name = create_directory(os.path.join("{self.calculator_folder}", filename))
             shutil.copy2('orca_template.inp', os.path.join(folder_name, f"{{filename}}.inp"))
             xyz_path = os.path.join("{self.settings.general.pool_path}", f"{{filename}}.xyz")
-            subprocess.run(f"sed -i 's#FILENAME#{{xyz_path}}#g' {{filename}}.inp", shell=True, cwd=folder_name)
+            subprocess.run(f"sed -i 's#FILENAME#{{xyz_path}}#g' {{filename}}.inp", shell=True, cwd=folder_name, check=True)
 
-            result = subprocess.run(f'{self.modules_string}{self.exports_string}$(which orca) {{filename}}.inp > {{filename}}.out 2> {{filename}}.err', shell=True, cwd=folder_name)
+            result = subprocess.run(f'{self.modules_string}{self.exports_string}$(which orca) {{filename}}.inp > {{filename}}.out 2> {{filename}}.err', shell=True, cwd=folder_name, check=True)
 
+            print(result)
+            
             return result.stdout
 
         def create_directory(folder):
@@ -202,7 +208,7 @@ def build_exports_string(input_string):
             key, value = pair.split(":", 1)
             key = key.strip()
             value = value.strip()
-            exports_string += f"export {key}={value} && "
+            exports_string += f"export {key}={value}:${key} && "
 
     return exports_string
 
