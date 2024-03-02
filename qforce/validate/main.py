@@ -45,66 +45,27 @@ def run_validator(settings):
     # 1. Read settings from the user provided file
     parsed_settings = initialize_settings(settings)
 
-    # Create generator working folder
-    generator_folder = f"{parsed_settings.general.job_dir}/{parsed_settings.general.generator_method}"
-    if os.path.exists(generator_folder):
-        shutil.rmtree(generator_folder)
-    os.makedirs(generator_folder)
-
-    generator = get_generator(parsed_settings)
+    # 2. Create scheduler
     scheduler = get_scheduler(parsed_settings)
+
+    # 3. Create generator and run it through the scheduler
+    generator = get_generator(parsed_settings)
     scheduler.add(generator)
     scheduler.execute()
 
-    parsed_settings.general.pool_path = os.path.join(parsed_settings.general.job_dir, "pool")
-
-    split_pdb_to_xyz(generator.structures_path, parsed_settings.general.pool_path)
-
+    # 4. Create pool folder and move there the structures whose energy will be recalculated
+    # TODO: at a certain point, this logic will be moved to a database manager
     if generator.structures_path is None:
         raise RuntimeError("No structures to resample has been found.")
+    parsed_settings.general.pool_path = os.path.join(parsed_settings.general.job_dir, "pool")
+    split_pdb_to_xyz(generator.structures_path, parsed_settings.general.pool_path)
 
+    # 5. Create calculator and run resampling with it
     calculator = get_calculator(parsed_settings)
     scheduler.add(calculator)
     scheduler.execute()
 
-    # Conformer filtering, ordering and univocal storing
-    pass
-
-    # resampling
-
-    # Generate generator input and launching scripts
-    if scheduler == "manual":
-        pass
-    if scheduler == "auto":  # maybe system is better?
-        # 1. generate generator inputs and scripts
-        # 2. launch locally using available resources
-        pass
-    if scheduler == "pbs":
-        # 1. generate generator inputs and scripts
-        # 2. generate generator inputs and scripts
-        # 3. generate queue files
-        # 4. submit to queue
-        # 5. store queue id for dependeny
-        pass
-
-    # 2.2 scheduler = none
-    #  - System settings for MD and QM calculation should be provided (tasks, memory per task)
-
-    # 2.3 scheduler = pbs
-    #  - Scheduler settings for MD and QM calculation should be provided (tasks, memory per task, possibly nodes, queue names)
-
-    # 2.4 scheduler = slurm
-    #  - Scheduler settings for MD and QM calculation should be provided (tasks, memory per task, possibly nodes, queue names)
-
-    # 3. Run generator
-    #  - Run differently based on the scheduler option
-
-    # 3. Energy sorting and duplicates removal
-
-    # 4. Resampling
-    #  - Two resampling techniques: GROMACS MD and any QM software
-    #  - Simulation settings for MD and QM calculation should be provided
-    #  - Scheduler settings for MD and QM calculation should be provided (tasks, memory per task, possibly nodes, queue names)
+    # 6. Correlate data and create plot
 
     pass
 
@@ -210,14 +171,6 @@ def _check_and_copy_settings_file(job_dir, config_file):
 
     settings_file = os.path.join(job_dir, ".settings.parsed.ini")
     shutil.copy2(config_file, settings_file)
-
-    # if config_file is not None:
-    #     if isinstance(config_file, StringIO):q
-    #         with open(settings_file, "w") as fh:
-    #             config_file.seek(0)
-    #             fh.write(config_file.read())
-    #     else:
-    #         shutil.copy2(config_file, settings_file)
 
     return settings_file
 

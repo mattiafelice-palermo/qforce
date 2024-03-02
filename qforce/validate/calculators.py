@@ -30,6 +30,19 @@ def get_calculator(settings):
 
 
 class CalculatorABC(ABC):
+    def __init__(self, settings):
+        self.settings = settings
+        self._check_files_in_pool()
+
+    def _check_files_in_pool(self):
+        print("here")
+        pool_path = self.settings.general.pool_path
+        for file in os.listdir(pool_path):
+            if file.endswith(".xyz"):
+                return
+
+        raise FileNotFoundError("No xyz file has been found in the pool directory.")
+
     @abstractmethod
     def run(self): ...
 
@@ -78,7 +91,7 @@ class Orca(CalculatorABC, Colt):
     """
 
     def __init__(self, settings):
-        self.settings = settings
+        super().__init__(settings)
         self.charge = settings.orca.charge
         self.multiplicity = settings.orca.multiplicity
         self.method = settings.orca.method
@@ -130,6 +143,23 @@ class Orca(CalculatorABC, Colt):
             file.write(script_content)
 
     def _python_script_content(self):
+        """
+        Generates a Python script content for ORCA job execution and management.
+
+        This method constructs a multi-line string that outlines a Python script. The script is designed to
+        dynamically create directories for ORCA calculations, manage input and output files, execute ORCA
+        with predefined settings, and aggregate results. The script leverages a job dispatcher for parallel
+        execution of ORCA jobs based on the number of molecular structures defined in the settings.
+
+        Returns:
+            str: A dedented multi-line string containing the Python script for executing ORCA jobs,
+                 handling file operations, and aggregating results. The script includes functions for
+                 directory creation, ORCA execution setup, and output management, configured according
+                 to instance attributes and settings.
+
+        The generated script uses external tools (`sed`, `orca`) and assumes their availability in the execution environment.
+        It dynamically adjusts to the number of structures and computational resources specified in the settings.
+        """
         # Fill in the template with specific details
         # This is where the script is customized based on the user input
         number_of_structures = self.settings.general.number_of_structures + 1
@@ -148,7 +178,7 @@ class Orca(CalculatorABC, Colt):
             xyz_path = os.path.join("{self.settings.general.pool_path}", f"{{filename}}.xyz")
             subprocess.run(f"sed -i 's#FILENAME#{{xyz_path}}#g' {{filename}}.inp", shell=True, cwd=folder_name, check=True)
 
-            result = subprocess.run(f'{self.modules_string}{self.exports_string}$(which orca) {{filename}}.inp > {{filename}}.out 2> {{filename}}.err', shell=True, cwd=folder_name, check=True)
+            result = subprocess.run(f'{self.modules_string}{self.exports_string} $(which orca) {{filename}}.inp > {{filename}}.out 2> {{filename}}.err', shell=True, cwd=folder_name, check=True)
 
             print(result)
             
@@ -192,6 +222,31 @@ class Orca(CalculatorABC, Colt):
 
 
 def build_exports_string(input_string):
+    """
+    Constructs a bash export string from key-value pairs in the input string, to
+    be inserted in the PBS/SLURM launch command.
+
+    The input string should contain key-value pairs separated by semicolons (;),
+    with each key and value separated by a colon (:). This function processes
+    each key-value pair to create a string of bash export commands, appending
+    the value of each key to its existing value (if any) in the environment.
+    Each export statement is concatenated with '&&' to allow for sequential
+    execution in bash.
+
+    Args:
+        input_string (str): A string containing key-value pairs in the format
+                            "KEY1:VALUE1;KEY2:VALUE2", where each pair represents
+                            an environment variable and its value to be exported.
+
+    Returns:
+        str: A string containing bash export commands for each key-value pair,
+             suitable for execution in a shell script. Returns an empty string
+             if the input is None or empty.
+
+    Examples:
+        >>> build_exports_string("PATH:/usr/local/bin;LD_LIBRARY_PATH:/usr/local/lib")
+        'export PATH=/usr/local/bin:$PATH && export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH && '
+    """
     # Check for None or empty input
     if not input_string:
         return ""
@@ -214,6 +269,24 @@ def build_exports_string(input_string):
 
 
 def build_modules_string(input_string):
+    """
+    Generates a string to load modules, formatted for bash, from a semicolon-separated list.
+
+    Parses an input string containing module names separated by semicolons (;) and constructs
+    a bash command string that loads these modules using `module load`. Each module load command
+    is concatenated with '&&' for sequential loading.
+
+    Args:
+        input_string (str): A semicolon-separated list of module names to be loaded.
+
+    Returns:
+        str: A bash command string that loads each specified module. Returns an empty string
+             if the input is None or empty.
+
+    Example:
+        >>> build_modules_string("gcc;python3.8;openmpi")
+        'module load gcc && module load python3.8 && module load openmpi && '
+    """
     # Check for None or empty input
     if not input_string:
         return ""

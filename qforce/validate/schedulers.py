@@ -98,16 +98,20 @@ class ManualScheduler(SchedulerABC):
     """Just instruct generators and resamplers to write input files and launch scripts to disk."""
 
     def execute(self):
-        for job in self._pending_jobs:
+        while self._pending_jobs:
+            job = self._pending_jobs.pop()  # Defaults to -1, removing the last item
             job.run(dry_run=True)
+            self._completed_jobs.append(job)
 
 
 class SystemScheduler(SchedulerABC):
     """Just instruct generators and resamplers to write input files and launch scripts to disk."""
 
     def execute(self):
-        for job in self._pending_jobs:
+        while self._pending_jobs:
+            job = self._pending_jobs.pop()  # Defaults to -1, removing the last item
             job.run()
+            self._completed_jobs.append(job)
 
 
 class SlurmScheduler(SchedulerABC):
@@ -143,8 +147,6 @@ class SlurmScheduler(SchedulerABC):
         dummy_job = subprocess.run(f"sbatch --wait --dependency=afterany:{job_string} --wrap='sleep 1'", shell=True)
 
         # Once completed, move the jobs out of the pending job list
-        while self._pending_jobs:
-            self._completed_jobs.append(self._pending_jobs.pop())
 
     def _slurm_script_content(self, job):
 

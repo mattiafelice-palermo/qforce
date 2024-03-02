@@ -73,8 +73,17 @@ class AnnealerABC(ABC, Colt):
         self._n_configs = settings.annealing.n_configs
         self._job_type = "generator"
         self.queue = settings.annealing.queue
-
+        self.generator_folder = self._create_working_folder()
         settings.general.number_of_structures = settings.annealing.n_configs
+
+    def _create_working_folder(self):
+        # Create generator working folder
+        generator_folder = f"{self.settings.general.job_dir}/{self.settings.general.generator_method}"
+        if os.path.exists(generator_folder):
+            shutil.rmtree(generator_folder)
+        os.makedirs(generator_folder)
+
+        return generator_folder
 
     @abstractmethod
     def run(self): ...
@@ -130,8 +139,12 @@ class GromacsAnnealing(AnnealerABC):
 
     #
     queue = :: str, optional
+    
     #
-    custom_gmx_flags = :: str, optional
+    custom_mdrun_flags = :: str, optional
+
+    #
+    custom_grompp_flags = :: str, optional
 
     #
     conda_environment = :: str, optional
@@ -140,7 +153,6 @@ class GromacsAnnealing(AnnealerABC):
 
     def __init__(self, settings):
         super().__init__(settings)
-        self.generator_folder = f"{settings.general.job_dir}/{settings.general.generator_method}"
         self.job_dir = self.generator_folder
         self.total_threads = self.settings.annealing.annealer.threads
         self._structures_path = None
@@ -178,16 +190,10 @@ class GromacsAnnealing(AnnealerABC):
     # TODO: if not provided by user, use gmx insert-molecule to generate a box whose size is calculated from molecular size
 
     def _setup_working_folder(self):
-        # Create generator working folder
-        generator_folder = self.generator_folder
-        if os.path.exists(generator_folder):
-            shutil.rmtree(generator_folder)
-        os.makedirs(generator_folder)
-
         # Copy necessary files
-        shutil.copy2(f"{self.settings.general.job_dir}/{self.settings.general.structure_file}", generator_folder)
-        shutil.copy2(f"{self.settings.general.job_dir}/{self.settings.general.topology_file}", generator_folder)
-        self._copy_mdp_file_to_generator_folder(generator_folder)
+        shutil.copy2(f"{self.settings.general.job_dir}/{self.settings.general.structure_file}", self.generator_folder)
+        shutil.copy2(f"{self.settings.general.job_dir}/{self.settings.general.topology_file}", self.generator_folder)
+        self._copy_mdp_file_to_generator_folder(self.generator_folder)
 
     def _copy_mdp_file_to_generator_folder(self, generator_folder: str) -> None:
         """Copy the MDP file to the generator folder."""
@@ -210,10 +216,16 @@ class GromacsAnnealing(AnnealerABC):
             shutil.rmtree(pool_path)
         os.makedirs(pool_path)
 
-        if self.settings.annealing.annealer.custom_gmx_flags == None:
-            custom_gmx_flags = ""
+        if self.settings.annealing.annealer.custom_grompp_flags == None:
+            custom_grompp_flags = ""
         else:
-            custom_gmx_flags = self.settings.annealing.annealer.custom_gmx_flags
+            print(self.settings.annealing.annealer.custom_grompp_flags)
+            custom_grompp_flags = self.settings.annealing.annealer.custom_grompp_flags
+
+        if self.settings.annealing.annealer.custom_mdrun_flags == None:
+            custom_mdrun_flags = ""
+        else:
+            custom_mdrun_flags = self.settings.annealing.annealer.custom_mdrun_flags
 
         # Write the composed script to the launch.sh file
         with open(script_path, "w") as script_handle:
@@ -221,11 +233,11 @@ class GromacsAnnealing(AnnealerABC):
             for directive in self.settings.annealing.annealer.custom_directives.split(";"):
                 script_handle.write(directive + "\n")
             script_handle.write(
-                f"gmx grompp -f annealing.mdp -c {structure_file} -p {topology_file} -o annealing > grompp.out 2> grompp.err\n"
+                f"gmx grompp -f annealing.mdp -c {structure_file} -p {topology_file} -o annealing {custom_grompp_flags} > grompp.out 2> grompp.err\n"
             )
 
             script_handle.write(
-                f"{gromacs_executable} mdrun -nt {self.total_threads} -deffnm annealing -c annealing {custom_gmx_flags} > mdrun.out 2> mdrun.err\n"
+                f"{gromacs_executable} mdrun -nt {self.total_threads} -deffnm annealing -c annealing {custom_mdrun_flags} > mdrun.out 2> mdrun.err\n"
             )
 
             # script_handle.write(f"echo 9 |  {gromacs_executable} energy -f annealing.edr -o annealing")
