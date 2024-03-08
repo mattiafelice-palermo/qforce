@@ -36,7 +36,8 @@ def get_generator(settings):
         if annealer == "gromacs":
             return GromacsAnnealing(settings)
         elif annealer == "xtb":
-            return XtbAnnealing(settings)
+            # return XtbAnnealing(settings)
+            raise NotImplementedError(f"Annealer '{annealer}' is not implemented.")
         else:
             raise NotImplementedError(f"Annealer '{annealer}' is not implemented.")
 
@@ -160,6 +161,7 @@ class GromacsAnnealing(AnnealerABC):
         self.queue = settings.annealing.annealer.queue
         self.launch_command = "bash launch.sh"
         self.conda_environment = settings.annealing.annealer.conda_environment
+        settings.general.number_of_structures += 1
 
         # Manage number of threads and custom gromacs flags
         if self.settings.annealing.annealer.threads == -1:
@@ -219,7 +221,6 @@ class GromacsAnnealing(AnnealerABC):
         if self.settings.annealing.annealer.custom_grompp_flags == None:
             custom_grompp_flags = ""
         else:
-            print(self.settings.annealing.annealer.custom_grompp_flags)
             custom_grompp_flags = self.settings.annealing.annealer.custom_grompp_flags
 
         if self.settings.annealing.annealer.custom_mdrun_flags == None:
@@ -243,7 +244,7 @@ class GromacsAnnealing(AnnealerABC):
             # script_handle.write(f"echo 9 |  {gromacs_executable} energy -f annealing.edr -o annealing")
 
             script_handle.write(
-                f"echo 0 | {gromacs_executable} trjconv -f annealing.trr -s annealing.tpr -o annealing.pdb"
+                f"echo 0 | {gromacs_executable} trjconv -f annealing.trr -s annealing.tpr -o annealing.pdb > trjconv.out 2> trjconv.err\n"
             )
 
     def _generate_input_files(self) -> None:

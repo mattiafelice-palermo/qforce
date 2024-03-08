@@ -89,7 +89,7 @@ md_settings_file = :: str
 generator_method = :: str :: [annealing, crest, qcg_microsolv]
 
 #
-calculator = :: str ::[orca]
+calculator = :: str
 
 #
 scheduler = :: str :: [manual, system, pbs, slurm]
@@ -109,6 +109,8 @@ scheduler = :: str :: [manual, system, pbs, slurm]
 
         # Converting all settings to SimpleNamespace for uniformity and ease of use
         updated_settings = {key: SimpleNamespace(**val) for key, val in settings.items()}
+
+        # pprint(updated_settings)
 
         return SimpleNamespace(**updated_settings)
 
@@ -130,6 +132,9 @@ scheduler = :: str :: [manual, system, pbs, slurm]
         questions.generate_block("scheduler", SchedulerABC.colt_user_input)
 
         # CALCULATORS
+        # print(questions["calculator"])
+        # print({key: SimpleNamespace(**val) for key, val in questions.items()})
+
         questions.generate_block("orca", Orca.colt_user_input)
 
         # questions.generate_block("scan", DihedralScan.colt_user_input)
