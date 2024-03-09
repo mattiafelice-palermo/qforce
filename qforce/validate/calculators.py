@@ -6,7 +6,7 @@ import textwrap
 import subprocess
 
 
-def get_calculator(settings):
+def get_calculators(settings):
     """
     Returns the appropriate calculator based on the specified settings.
 
@@ -19,12 +19,23 @@ def get_calculator(settings):
     Raises:
         NotImplementedError: If the calculator specified in the settings is not supported.
     """
-    scheduler = settings.general.calculator.lower()
+    calculators = []
 
-    if scheduler == "orca":
-        return Orca(settings)
+    # Create calculator objects from the user input and return them in a list
+    for job_string, calculator_settings in vars(settings.calculators).items():  # fetch multiple jobs
+        if calculator_settings.driver == "orca":
+            calculators.append(Orca(job_string, settings))
+        else:  # in theory we should never get here, but just to be safe...
+            raise NotImplementedError(f"Calculator '{calculator_settings.driver}' is not implemented.")
+
+    return calculators
+
+
+def get_calculator_class(name):
+    if name == "orca":
+        return Orca
     else:
-        raise NotImplementedError(f"Calculator '{scheduler}' is not implemented.")
+        raise NotImplementedError(f"Calculator '{name}' is not implemented.")
 
 
 class CalculatorABC(ABC):
@@ -87,22 +98,18 @@ class Orca(CalculatorABC, Colt):
 
     """
 
-    def __init__(self, settings):
+    def __init__(self, job_string, settings):
         super().__init__(settings)
-        self.charge = settings.orca.charge
-        self.multiplicity = settings.orca.multiplicity
-        self.method = settings.orca.method
-        self.blocks = settings.orca.blocks
-        self.total_threads = settings.orca.total_threads
-        self.total_memory = settings.orca.total_memory
-        self.single_calculation_threads = settings.orca.single_calculation_threads
-        self.orca_executable = settings.orca.orca_executable
-        self.calculator_folder = os.path.join(self.settings.general.job_dir, self.settings.general.calculator)
-        self.modules_string = build_modules_string(settings.orca.modules)
-        self.exports_string = build_exports_string(settings.orca.exports)
+        # Set calculator-related settings from colt
+        calculator_settings = vars(settings.calculators)[job_string]
+
+        # Automatically set all attributes from calculator_settings
+        for attr, value in vars(calculator_settings).items():
+            setattr(self, attr, value)
+
+        # Other calculator settings that do not come directly from the colt Calculator settings
+        self.calculator_folder = os.path.join(self.settings.general.job_dir, job_string).replace("::", "__")
         self.launch_command = "python dispatcher.py"
-        self.queue = settings.orca.queue
-        self.conda_environment = settings.orca.conda_environment
         self.job_dir = self.calculator_folder  # just for the schedulers
 
     def run(self, dry_run=False):
@@ -110,6 +117,7 @@ class Orca(CalculatorABC, Colt):
         self._generate_orca_template()
         self._generate_launch_script()
 
+        # For the system scheduler
         if not dry_run:
             try:
                 run_orca = subprocess.Popen(
@@ -123,6 +131,7 @@ class Orca(CalculatorABC, Colt):
             except Exception as e:
                 print("Failed to run Orca calculator.\n", e)
 
+        # Temporary - works only with system scheduler and logic should be moved somewhere else
         self._extract_output()
 
     def _setup_working_folder(self):
@@ -161,6 +170,8 @@ class Orca(CalculatorABC, Colt):
         # Fill in the template with specific details
         # This is where the script is customized based on the user input
         number_of_structures = self.settings.general.number_of_structures
+        modules_string = build_modules_string(self.modules)
+        exports_string = build_exports_string(self.exports)
 
         return textwrap.dedent(
             f"""
@@ -176,7 +187,7 @@ class Orca(CalculatorABC, Colt):
             xyz_path = os.path.join("{self.settings.general.pool_path}", f"{{filename}}.xyz")
             subprocess.run(f"sed -i 's#FILENAME#{{xyz_path}}#g' {{filename}}.inp", shell=True, cwd=folder_name, check=True)
 
-            result = subprocess.run(f'{self.modules_string}{self.exports_string} $(which orca) {{filename}}.inp > {{filename}}.out 2> {{filename}}.err', shell=True, cwd=folder_name, check=True)
+            result = subprocess.run(f'{modules_string}{exports_string} $(which orca) {{filename}}.inp > {{filename}}.out 2> {{filename}}.err', shell=True, cwd=folder_name, check=True)
 
             print(result)
 
@@ -253,10 +264,19 @@ class Gromacs(CalculatorABC, Colt):
     total_memory = :: int
 
     #
-    single_calculation_threads = 1 :: int
+    custom_mdrun_flags = :: str, optional
 
     #
-    orca_executable = orca :: str, optional
+    custom_grompp_flags = :: str, optional
+
+    #
+    conda_environment = :: str, optional
+    
+    #
+    single_calculation_threads = 1 :: int
+
+    # 
+    gromacs_executable = gmx :: str, optional
 
     # list of modules to be loaded (semicolon separated)
     modules = :: str, optional
@@ -275,8 +295,7 @@ class Gromacs(CalculatorABC, Colt):
 
     def __init__(self, settings):
         super().__init__(settings)
-        self.charge = settings.orca.charge
-        self.multiplicity = settings.orca.multiplicity
+        self.topology_file = settings.orca.multiplicity
         self.method = settings.orca.method
         self.blocks = settings.orca.blocks
         self.total_threads = settings.orca.total_threads

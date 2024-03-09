@@ -9,10 +9,11 @@ from colt import Colt, from_commandline
 from colt.validator import Validator
 
 from .generators import AnnealerABC, _implemented_generators, _implemented_annealers, get_generator
-from .calculators import Orca, get_calculator
+from .calculators import get_calculators, get_calculator_class
 from .archive import split_pdb_to_xyz
 from .schedulers import SchedulerABC, get_scheduler
 from pprint import pprint
+import re
 
 
 def check_if_file_exists(filename):
@@ -61,8 +62,9 @@ def run_validator(settings):
     split_pdb_to_xyz(generator.structures_path, parsed_settings.general.pool_path)
 
     # 5. Create calculator and run resampling with it
-    calculator = get_calculator(parsed_settings)
-    scheduler.add(calculator)
+    calculators = get_calculators(parsed_settings)
+    for calculator in calculators:
+        scheduler.add(calculator)
     scheduler.execute()
 
     # 6. Correlate data and create plot
@@ -89,14 +91,44 @@ md_settings_file = :: str
 generator_method = :: str :: [annealing, crest, qcg_microsolv]
 
 #
-calculator = :: str
+calculators = :: str
 
 #
 scheduler = :: str :: [manual, system, pbs, slurm]
 """
 
+    @classmethod
+    def from_config(cls, settings):
+        settings_from_questions = cls._set_config(settings)
+        reformatted_settings = cls.reformat_settings(settings_from_questions)
+        return reformatted_settings
+
+    def reformat_settings(settings_from_questions):
+        pprint(settings_from_questions.calculators)
+
+        for calculator_name, calculator_settings in vars(settings_from_questions.calculators).items():
+            calculator_settings.name = calculator_name.split("::")[0]
+            calculator_settings.driver = calculator_name.split("::")[1]
+
+        return settings_from_questions
+
     @staticmethod
     def _set_config(settings):
+        # NOTE: Data from colt.answers can be explored with settings[value].to_dict()
+        # Hacking colt to restructure calculators section - colt does not allow to directly edit answers
+        # so I access the underlying class dictionary to access the "_data" attribute, which is a dictionary itself
+        calculator_jobs_string = settings["general"]["calculators"]
+        calculator_jobs = parse_jobs_to_dict(calculator_jobs_string)
+
+        settings.__dict__["_data"]["calculators"] = {}
+
+        for job_id, calculator_name in calculator_jobs.items():
+            job_string = f"{job_id}::{calculator_name}"
+            print(job_string)
+            calculator_settings = SimpleNamespace(**settings[job_string])
+            settings.__dict__["_data"]["calculators"].update({job_string: calculator_settings})
+            del settings.__dict__["_data"][job_string]
+
         # Extracting annealer settings and updating its format
         annealer_info = settings["annealing"]["annealer"]
         annealer_name = annealer_info.value
@@ -109,14 +141,7 @@ scheduler = :: str :: [manual, system, pbs, slurm]
 
         # Converting all settings to SimpleNamespace for uniformity and ease of use
         updated_settings = {key: SimpleNamespace(**val) for key, val in settings.items()}
-
-        # pprint(updated_settings)
-
         return SimpleNamespace(**updated_settings)
-
-    @classmethod
-    def from_config(cls, settings):
-        return cls._set_config(settings)
 
     @classmethod
     def _extend_user_input(cls, questions):
@@ -131,11 +156,19 @@ scheduler = :: str :: [manual, system, pbs, slurm]
         # SCHEDULERS
         questions.generate_block("scheduler", SchedulerABC.colt_user_input)
 
-        # CALCULATORS
-        # print(questions["calculator"])
-        # print({key: SimpleNamespace(**val) for key, val in questions.items()})
+        calculator_jobs = {}
 
-        questions.generate_block("orca", Orca.colt_user_input)
+        with open(cls._config_file, "r") as config_handle:
+            for line in config_handle:
+                if "calculator" in line:
+                    calculator_jobs = parse_jobs_to_dict(line)
+
+        print(calculator_jobs)
+
+        # CALCULATORS
+        for job_id, calculator_name in calculator_jobs.items():
+            calc = get_calculator_class(calculator_name)
+            questions.generate_block(f"{job_id}::{calculator_name}", calc.colt_user_input)
 
         # questions.generate_block("scan", DihedralScan.colt_user_input)
         # questions.generate_cases(
@@ -144,6 +177,22 @@ scheduler = :: str :: [manual, system, pbs, slurm]
         #     block="qm",
         # )
         # questions.generate_block("terms", Terms.get_questions())
+
+    @classmethod
+    def from_questions(
+        cls, *args, check_only=False, ask_all=False, ask_defaults=True, config=None, presets=None, **kwargs
+    ):
+        cls._config_file = config
+        out = super().from_questions(
+            *args,
+            check_only=check_only,
+            ask_all=ask_all,
+            ask_defaults=ask_defaults,
+            config=config,
+            presets=presets,
+            **kwargs,
+        )
+        return out
 
 
 def _get_job_info(filename):
@@ -190,3 +239,20 @@ def initialize_settings(config_file, presets=None):
     settings.general.job_dir = job_dir
 
     return settings
+
+
+def parse_jobs_to_dict(line):
+    # Verify the overall format is correct (jobs separated by commas, spaces allowed)
+    clean_line = re.sub(r"^\s*calculators\s*=\s*", "", line, flags=re.IGNORECASE)
+
+    if not re.match(r"^\s*(\w+::\w+\s*,\s*)*\w+::\w+\s*$", clean_line):
+        raise ValueError("The line is not formatted correctly. Expected format: 'key::value, key2::value2, ...'")
+
+    # Pattern to extract key-value pairs, ignoring spaces around ::
+    pattern = r"\s*(\w+)::(\w+)\s*"
+    matches = re.findall(pattern, line)
+
+    if matches:
+        return dict(matches)
+    else:
+        raise ValueError("No valid 'key::value' pairs found.")
