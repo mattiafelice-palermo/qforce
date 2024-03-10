@@ -12,7 +12,9 @@ from .generators import AnnealerABC, _implemented_generators, _implemented_annea
 from .calculators import get_calculators, get_calculator_class
 from .archive import split_pdb_to_xyz
 from .schedulers import SchedulerABC, get_scheduler
+from .misc import get_fullpath, GroBoxEditor
 from pprint import pprint
+
 import re
 
 
@@ -29,7 +31,7 @@ Validator.overwrite_validator("file", check_if_file_exists)
 @from_commandline(
     """
 # File name for the optional settings.
-settings = :: file, optional, alias=o
+config_file = :: file, optional, alias=o
 """,
     description={
         "logo": "Add qforce LOGO here",
@@ -42,15 +44,16 @@ settings = :: file, optional, alias=o
 )
 
 # Entry point for the qforce-validate routine
-def run_validator(settings):
+def run_validator(config_file):
     # 1. Read settings from the user provided file
-    parsed_settings = initialize_settings(settings)
+    settings = initialize_settings(config_file)
 
     # 2. Create scheduler
-    scheduler = get_scheduler(parsed_settings)
+    scheduler = get_scheduler(settings)
 
     # 3. Create generator and run it through the scheduler
-    generator = get_generator(parsed_settings)
+    # TODO: allow for multiple generators run
+    generator = get_generator(settings)
     scheduler.add(generator)
     scheduler.execute()
 
@@ -58,11 +61,11 @@ def run_validator(settings):
     # TODO: at a certain point, this logic will be moved to a database manager
     if generator.structures_path is None:
         raise RuntimeError("No structures to resample has been found.")
-    parsed_settings.general.pool_path = os.path.join(parsed_settings.general.job_dir, "pool")
-    split_pdb_to_xyz(generator.structures_path, parsed_settings.general.pool_path)
+    settings.general.pool_path = os.path.join(settings.general.job_dir, "pool")
+    split_pdb_to_xyz(generator.structures_path, settings.general.pool_path)
 
-    # 5. Create calculator and run resampling with it
-    calculators = get_calculators(parsed_settings)
+    # 5. Create calculators and run resamplings
+    calculators = get_calculators(settings)
     for calculator in calculators:
         scheduler.add(calculator)
     scheduler.execute()
@@ -103,15 +106,6 @@ scheduler = :: str :: [manual, system, pbs, slurm]
         reformatted_settings = cls.reformat_settings(settings_from_questions)
         return reformatted_settings
 
-    def reformat_settings(settings_from_questions):
-        pprint(settings_from_questions.calculators)
-
-        for calculator_name, calculator_settings in vars(settings_from_questions.calculators).items():
-            calculator_settings.name = calculator_name.split("::")[0]
-            calculator_settings.driver = calculator_name.split("::")[1]
-
-        return settings_from_questions
-
     @staticmethod
     def _set_config(settings):
         # NOTE: Data from colt.answers can be explored with settings[value].to_dict()
@@ -142,6 +136,19 @@ scheduler = :: str :: [manual, system, pbs, slurm]
         # Converting all settings to SimpleNamespace for uniformity and ease of use
         updated_settings = {key: SimpleNamespace(**val) for key, val in settings.items()}
         return SimpleNamespace(**updated_settings)
+
+    def reformat_settings(settings_from_questions):
+        pprint(settings_from_questions.calculators)
+
+        for calculator_name, calculator_settings in vars(settings_from_questions.calculators).items():
+            calculator_settings.name = calculator_name.split("::")[0]
+            calculator_settings.driver = calculator_name.split("::")[1]
+
+        # Build absolute path for the structure file
+        settings_from_questions.general.structure_file = get_fullpath(settings_from_questions.general.structure_file)
+
+        settings_from_questions.general.box_vectors = GroBoxEditor(settings_from_questions.general.structure_file)
+        return settings_from_questions
 
     @classmethod
     def _extend_user_input(cls, questions):

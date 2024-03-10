@@ -1,9 +1,12 @@
 from colt import Colt
+from .misc import get_fullpath
+
 from abc import ABC, abstractmethod
 import shutil
 import os
 import textwrap
 import subprocess
+import inspect
 
 
 def get_calculators(settings):
@@ -25,6 +28,8 @@ def get_calculators(settings):
     for job_string, calculator_settings in vars(settings.calculators).items():  # fetch multiple jobs
         if calculator_settings.driver == "orca":
             calculators.append(Orca(job_string, settings))
+        elif calculator_settings.driver == "gromacs":
+            calculators.append(Gromacs(job_string, settings))
         else:  # in theory we should never get here, but just to be safe...
             raise NotImplementedError(f"Calculator '{calculator_settings.driver}' is not implemented.")
 
@@ -32,10 +37,24 @@ def get_calculators(settings):
 
 
 def get_calculator_class(name):
-    if name == "orca":
-        return Orca
-    else:
-        raise NotImplementedError(f"Calculator '{name}' is not implemented.")
+    # Convert the user input to lowercase for case-insensitive comparison
+    name_lowercase = name.lower()
+
+    # Filter the globals for subclasses of CalculatorABC
+    # and prepare a dictionary mapping lowercase class names to their actual class objects
+    calculator_classes = {
+        cls_name.lower(): cls_obj
+        for cls_name, cls_obj in globals().items()
+        if inspect.isclass(cls_obj) and issubclass(cls_obj, CalculatorABC) and cls_obj is not CalculatorABC
+    }
+
+    # Try to find a class that matches the user input (case-insensitive)
+    for cls_name_lower, cls_obj in calculator_classes.items():
+        if cls_name_lower == name_lowercase:
+            return cls_obj
+
+    # If no class was found that matches the user input, raise an error
+    raise NotImplementedError(f"Calculator '{name}' is not implemented.")
 
 
 class CalculatorABC(ABC):
@@ -100,14 +119,14 @@ class Orca(CalculatorABC, Colt):
 
     def __init__(self, job_string, settings):
         super().__init__(settings)
-        # Set calculator-related settings from colt
-        calculator_settings = vars(settings.calculators)[job_string]
 
         # Automatically set all attributes from calculator_settings
+        calculator_settings = vars(settings.calculators)[job_string]
+
         for attr, value in vars(calculator_settings).items():
             setattr(self, attr, value)
 
-        # Other calculator settings that do not come directly from the colt Calculator settings
+        # Other calculator settings that do not come directly from the colt calculator settings
         self.calculator_folder = os.path.join(self.settings.general.job_dir, job_string).replace("::", "__")
         self.launch_command = "python dispatcher.py"
         self.job_dir = self.calculator_folder  # just for the schedulers
@@ -167,7 +186,7 @@ class Orca(CalculatorABC, Colt):
         The generated script uses external tools (`sed`, `orca`) and assumes their availability in the execution environment.
         It dynamically adjusts to the number of structures and computational resources specified in the settings.
         """
-        # Fill in the template with specific details
+
         # This is where the script is customized based on the user input
         number_of_structures = self.settings.general.number_of_structures
         modules_string = build_modules_string(self.modules)
@@ -182,12 +201,12 @@ class Orca(CalculatorABC, Colt):
 
         def run_orca(filename):
             # Call the orca_calc.sh script and capture its output
-            folder_name = create_directory(os.path.join("{self.calculator_folder}", filename))
-            shutil.copy2('orca_template.inp', os.path.join(folder_name, f"{{filename}}.inp"))
+            folder_path = create_directory(os.path.join("{self.calculator_folder}", filename))
+            shutil.copy2('orca_template.inp', os.path.join(folder_path, f"{{filename}}.inp"))
             xyz_path = os.path.join("{self.settings.general.pool_path}", f"{{filename}}.xyz")
-            subprocess.run(f"sed -i 's#FILENAME#{{xyz_path}}#g' {{filename}}.inp", shell=True, cwd=folder_name, check=True)
+            subprocess.run(f"sed -i 's#FILENAME#{{xyz_path}}#g' {{filename}}.inp", shell=True, cwd=folder_path, check=True)
 
-            result = subprocess.run(f'{modules_string}{exports_string} $(which orca) {{filename}}.inp > {{filename}}.out 2> {{filename}}.err', shell=True, cwd=folder_name, check=True)
+            result = subprocess.run(f'{modules_string}{exports_string} $(which orca) {{filename}}.inp > {{filename}}.out 2> {{filename}}.err', shell=True, cwd=folder_path, check=True)
 
             print(result)
 
@@ -272,7 +291,7 @@ class Gromacs(CalculatorABC, Colt):
     #
     conda_environment = :: str, optional
     
-    #
+    # The number of structures per thread is calculated based on single_calculation_threads and total_threads
     single_calculation_threads = 1 :: int
 
     # 
@@ -293,42 +312,37 @@ class Gromacs(CalculatorABC, Colt):
 
     """
 
-    def __init__(self, settings):
+    def __init__(self, job_string, settings):
         super().__init__(settings)
-        self.topology_file = settings.orca.multiplicity
-        self.method = settings.orca.method
-        self.blocks = settings.orca.blocks
-        self.total_threads = settings.orca.total_threads
-        self.total_memory = settings.orca.total_memory
-        self.single_calculation_threads = settings.orca.single_calculation_threads
-        self.orca_executable = settings.orca.orca_executable
-        self.calculator_folder = os.path.join(self.settings.general.job_dir, self.settings.general.calculator)
-        self.modules_string = build_modules_string(settings.orca.modules)
-        self.exports_string = build_exports_string(settings.orca.exports)
+
+        # Automatically set all attributes from calculator_settings
+        calculator_settings = vars(settings.calculators)[job_string]
+
+        for attr, value in vars(calculator_settings).items():
+            setattr(self, attr, value)
+
+        self.topology_file = get_fullpath(self.topology_file)
+        self.md_settings_file = get_fullpath(self.md_settings_file)
+
+        # Other calculator settings that do not come directly from the colt calculator settings
+        self.calculator_folder = os.path.join(self.settings.general.job_dir, job_string).replace("::", "__")
         self.launch_command = "python dispatcher.py"
-        self.queue = settings.orca.queue
-        self.conda_environment = settings.orca.conda_environment
         self.job_dir = self.calculator_folder  # just for the schedulers
+        self.number_of_batches = self.total_threads // self.single_calculation_threads
+        self.structures_per_batch = self.settings.general.number_of_structures // self.number_of_batches
 
     def run(self, dry_run=False):
         self._setup_working_folder()
-        self._generate_orca_template()
         self._generate_launch_script()
 
+        # For the system scheduler
         if not dry_run:
             try:
-                run_orca = subprocess.Popen(
-                    ["python", "dispatcher.py"],
-                    cwd=self.calculator_folder,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                )
-
-                run_orca.wait()
+                print("IN GROMACS RUN")
+                command = "python dispatcher.py > dispatcher.out 2> dispatcher.err"
+                subprocess.run(command, shell=True, cwd=self.calculator_folder, check=True, executable="/bin/bash")
             except Exception as e:
-                print("Failed to run Orca calculator.\n", e)
-
-        self._extract_output()
+                print("Failed to run GROMACS calculator.\n", e)
 
     def _setup_working_folder(self):
         # Create generator working folder
@@ -336,14 +350,98 @@ class Gromacs(CalculatorABC, Colt):
             shutil.rmtree(self.calculator_folder)
         os.makedirs(self.calculator_folder)
 
-        # TODO: generate also the nth folders for the calculation? they will need to be copied though...
-
     def _generate_launch_script(self):
-        calculator_folder = self.calculator_folder
         # Create the job script based on user input and template
         script_content = self._python_script_content()
-        with open(os.path.join(calculator_folder, "dispatcher.py"), "w") as file:
+        with open(os.path.join(self.calculator_folder, "dispatcher.py"), "w") as file:
             file.write(script_content)
+
+    def _python_script_content(self):
+        # This is where the script is customized based on the user input
+        number_of_batches = self.number_of_batches
+        structures_per_batch = self.structures_per_batch
+        modules_string = build_modules_string(self.modules)
+        exports_string = build_exports_string(self.exports)
+        box_vectors = self.settings.general.box_vectors.get_original_box_vector_string()
+
+        return textwrap.dedent(
+            f"""
+        import jobdispatcher as jd
+        from openbabel import pybel
+        import subprocess
+        import os
+        import shutil
+
+        def run_gromacs(batch_number):
+            # Call the orca_calc.sh script and capture its output
+            folder_path = create_directory(os.path.join("{self.calculator_folder}", f"batch_{{batch_number}}"))
+            batchfile = generate_gro_file(batch_number, folder_path)
+ 
+            # Copy necessary files into the running folder (maybe not necessary, just refer to root folder?)
+
+            # Run GROMPP
+            try: 
+                grompp = subprocess.run(f'{modules_string}{exports_string} $(which {self.gromacs_executable}) grompp -f resample.mdp'
+                                        ' -c resample.gro -p resample.top -o resample.tpr -maxwarn 2 > grompp.out 2> grompp.err', 
+                                        shell=True, cwd=folder_path, check=True, executable='/bin/bash')
+                print(grompp)
+            except:
+                raise RuntimeError(f"Failed to run GROMACS grompp command in {self.name}::{self.driver} for batch {{batch_number}}."
+                                    "Check the calculator folder to inspect the error:"
+                                    " -> {self.calculator_folder}")
+
+            # Run MDRUN
+            try:
+                mdrun = subprocess.run(f'{modules_string}{exports_string} $(which {self.gromacs_executable}) mdrun -nt {self.single_calculation_threads}'
+                                       f' -s resample.tpr -rerun {{batchfile}} > mdrun.out 2> mdrun.err', shell=True, cwd=folder_path, check=True, executable='/bin/bash')
+
+                print(mdrun)
+            except:
+                raise RuntimeError(f"Failed to run GROMACS mdrun command in {self.name}::{self.driver} for batch {{batch_number}}."
+                                    "Check the calculator folder to inspect the error:"
+                                    " -> {self.calculator_folder}")
+            return #result.stdout
+        
+        def generate_gro_file(batch_number, folder_path):
+            initial_molecule_id = 1+{structures_per_batch}*(batch_number-1)
+            final_molecule_id = initial_molecule_id + {structures_per_batch}
+            batchfile_path = os.path.join(folder_path, f"batch_{{batch_number}}.gro")
+
+            with open(batchfile_path, 'w') as gro_file:
+                for i in range(initial_molecule_id, final_molecule_id):
+                    mol = next(pybel.readfile('xyz', os.path.join("{self.settings.general.pool_path}", f"molecule_{{i}}.xyz")))
+                    gro_str = mol.write('gro')
+                    gro_lines = gro_str.splitlines()
+                    gro_lines[-1] = "{box_vectors}"
+                    modified_gro_str = "\\n".join(gro_lines)
+                    gro_file.write(modified_gro_str + "\\n")  # Add a newline to separate entries
+            return batchfile_path
+
+
+
+        def create_directory(folder):
+            if os.path.exists(folder):
+                shutil.rmtree(folder)
+            os.makedirs(folder)
+            os.symlink("{self.topology_file}", os.path.join(folder, "resample.top"))
+            os.symlink("{self.md_settings_file}", os.path.join(folder, "resample.mdp"))
+            os.symlink("{self.settings.general.structure_file}", os.path.join(folder, "resample.gro"))
+            return folder
+
+        jobs = []
+        for i in range(1, {number_of_batches}+1):
+            job = jd.Job(name=f"batch_{{i}}", function=lambda i=i: run_gromacs(i), cores={self.single_calculation_threads})
+            jobs.append(job)
+
+        dispatcher = jd.JobDispatcher(jobs, maxcores={self.total_threads}, engine="multiprocessing")
+        results = dispatcher.run()
+
+        # # Writing the outputs to a file
+        # with open("orca_outputs.txt", "w") as outfile:
+        #     for result in results.values():
+        #         outfile.write(result)
+        """
+        )
 
 
 def build_exports_string(input_string):

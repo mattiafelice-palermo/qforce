@@ -193,7 +193,7 @@ class GromacsAnnealing(AnnealerABC):
 
     def _setup_working_folder(self):
         # Copy necessary files
-        shutil.copy2(f"{self.settings.general.job_dir}/{self.settings.general.structure_file}", self.generator_folder)
+        shutil.copy2(f"{self.settings.general.structure_file}", self.generator_folder)
         shutil.copy2(f"{self.settings.general.job_dir}/{self.settings.general.topology_file}", self.generator_folder)
         self._copy_mdp_file_to_generator_folder(self.generator_folder)
 
