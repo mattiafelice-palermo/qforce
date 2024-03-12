@@ -98,6 +98,9 @@ calculators = :: str
 
 #
 scheduler = :: str :: [manual, system, pbs, slurm]
+
+#
+shell = bash :: str, optional :: [bash, sh, zsh]
 """
 
     @classmethod

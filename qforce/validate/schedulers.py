@@ -91,6 +91,7 @@ class SystemScheduler(SchedulerABC):
         while self._pending_jobs:
             job = self._pending_jobs.pop()  # Defaults to -1, removing the last item
             job.run()
+            job.postprocess()
             self._completed_jobs.append(job)
 
 

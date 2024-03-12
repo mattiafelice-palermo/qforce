@@ -1,5 +1,6 @@
 from colt import Colt
 from .misc import get_fullpath
+from .archive import extract_energies
 
 from abc import ABC, abstractmethod
 import shutil
@@ -71,7 +72,12 @@ class CalculatorABC(ABC):
         raise FileNotFoundError("No xyz file has been found in the pool directory.")
 
     @abstractmethod
-    def run(self): ...
+    def run(self):
+        raise NotImplementedError
+
+    @abstractmethod
+    def postprocess(self):
+        raise NotImplementedError
 
 
 class Orca(CalculatorABC, Colt):
@@ -149,9 +155,6 @@ class Orca(CalculatorABC, Colt):
                 run_orca.wait()
             except Exception as e:
                 print("Failed to run Orca calculator.\n", e)
-
-        # Temporary - works only with system scheduler and logic should be moved somewhere else
-        self._extract_output()
 
     def _setup_working_folder(self):
         # Create generator working folder
@@ -239,7 +242,7 @@ class Orca(CalculatorABC, Colt):
         orca_input_path = os.path.join(calculator_folder, "orca_template.inp")
 
         if self.single_calculation_threads > 1:
-            pal_string = f"PAL{self.single_calculation_thread}"
+            pal_string = f"PAL{self.single_calculation_threads}"
         else:
             pal_string = ""
 
@@ -253,7 +256,7 @@ class Orca(CalculatorABC, Colt):
         with open(orca_input_path, "w") as orca_input_handle:
             orca_input_handle.write(template_string)
 
-    def _extract_output(self):
+    def postprocess(self):
         energies = {}
         for molecule_index in range(1, self.settings.general.number_of_structures + 1):
             with open(
@@ -264,6 +267,7 @@ class Orca(CalculatorABC, Colt):
                         energies[molecule_index] = float(line.split()[4])
 
         print(energies)
+        return energies
 
 
 class Gromacs(CalculatorABC, Colt):
@@ -338,7 +342,6 @@ class Gromacs(CalculatorABC, Colt):
         # For the system scheduler
         if not dry_run:
             try:
-                print("IN GROMACS RUN")
                 command = "python dispatcher.py > dispatcher.out 2> dispatcher.err"
                 subprocess.run(command, shell=True, cwd=self.calculator_folder, check=True, executable="/bin/bash")
             except Exception as e:
@@ -442,6 +445,17 @@ class Gromacs(CalculatorABC, Colt):
         #         outfile.write(result)
         """
         )
+
+    def postprocess(self):
+        energies = []
+        for batch_number in range(1, self.number_of_batches + 1):
+            batchfile_path = os.path.join(self.calculator_folder, f"batch_{batch_number}")
+            batch_energies = extract_energies(os.path.join(batchfile_path, "md.log"))
+            print(batch_energies)
+        # batch_number = 1
+        # for i in range(1, self.settings.general.number_of_structures):
+        #     threshold = batch_number * (self.structures_per_batch / self.settings.general.number_of_structures)
+        #     if (i/self.settings.general.number_of_structures) < threshold:
 
 
 def build_exports_string(input_string):

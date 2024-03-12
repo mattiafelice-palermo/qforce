@@ -93,6 +93,9 @@ class AnnealerABC(ABC, Colt):
     @abstractmethod
     def structures_path(self): ...
 
+    def postprocess(self):
+        pass
+
     @property
     def t_min(self):
         return self._t_min

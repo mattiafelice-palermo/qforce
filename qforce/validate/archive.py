@@ -91,3 +91,4 @@ def extract_energies(md_log_path):
             if capture:
                 splitted = line.strip().split()
                 frame_energies.extend(splitted)
+    return energies
