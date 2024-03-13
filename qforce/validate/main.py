@@ -121,7 +121,6 @@ shell = bash :: str, optional :: [bash, sh, zsh]
 
         for job_id, calculator_name in calculator_jobs.items():
             job_string = f"{job_id}::{calculator_name}"
-            print(job_string)
             calculator_settings = SimpleNamespace(**settings[job_string])
             settings.__dict__["_data"]["calculators"].update({job_string: calculator_settings})
             del settings.__dict__["_data"][job_string]
@@ -141,7 +140,6 @@ shell = bash :: str, optional :: [bash, sh, zsh]
         return SimpleNamespace(**updated_settings)
 
     def reformat_settings(settings_from_questions):
-        pprint(settings_from_questions.calculators)
 
         for calculator_name, calculator_settings in vars(settings_from_questions.calculators).items():
             calculator_settings.name = calculator_name.split("::")[0]
@@ -172,8 +170,6 @@ shell = bash :: str, optional :: [bash, sh, zsh]
             for line in config_handle:
                 if "calculator" in line:
                     calculator_jobs = parse_jobs_to_dict(line)
-
-        print(calculator_jobs)
 
         # CALCULATORS
         for job_id, calculator_name in calculator_jobs.items():

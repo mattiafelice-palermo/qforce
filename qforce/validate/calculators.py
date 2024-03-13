@@ -10,6 +10,10 @@ import subprocess
 import inspect
 
 
+from dataclasses import dataclass, field
+from typing import List, Optional
+
+
 def get_calculators(settings):
     """
     Returns the appropriate calculator based on the specified settings.
@@ -257,17 +261,18 @@ class Orca(CalculatorABC, Colt):
             orca_input_handle.write(template_string)
 
     def postprocess(self):
-        energies = {}
+        energies = []
         for molecule_index in range(1, self.settings.general.number_of_structures + 1):
             with open(
                 os.path.join(self.calculator_folder, f"molecule_{molecule_index}/molecule_{molecule_index}.out"), "r"
             ) as file_handle:
                 for line in file_handle:
                     if "FINAL SINGLE POINT ENERGY" in line:
-                        energies[molecule_index] = float(line.split()[4])
+                        energies.append(float(line.split()[4]))
 
-        print(energies)
-        return energies
+        calculation_output = CalculationOutput(name=self.calculator_folder, unit="Hartree", spe=energies)
+
+        return calculation_output
 
 
 class Gromacs(CalculatorABC, Colt):
@@ -447,15 +452,57 @@ class Gromacs(CalculatorABC, Colt):
         )
 
     def postprocess(self):
-        energies = []
+        energies = CalculationOutput(name=self.calculator_folder, unit="kJ/mol")
+
         for batch_number in range(1, self.number_of_batches + 1):
             batchfile_path = os.path.join(self.calculator_folder, f"batch_{batch_number}")
-            batch_energies = extract_energies(os.path.join(batchfile_path, "md.log"))
-            print(batch_energies)
+            energies.merge_with(self.extract_energies(os.path.join(batchfile_path, "md.log")))
+
+        return energies
         # batch_number = 1
         # for i in range(1, self.settings.general.number_of_structures):
         #     threshold = batch_number * (self.structures_per_batch / self.settings.general.number_of_structures)
         #     if (i/self.settings.general.number_of_structures) < threshold:
+
+    def extract_energies(self, md_log_path):
+        """
+        Extracts energy information from a GROMACS md.log file and writes the formatted data to an output file.
+
+        Parameters:
+        md_log_path (str): The path to the md.log file.
+        output_path (str): The path to the output file where the formatted energy information will be written.
+        """
+        # Flag to start capturing energy data
+        capture = False
+        frame_energies = []
+        energies = []
+
+        calculation_output = CalculationOutput(name=f"Energies from {md_log_path}", unit="kJ/mol")
+
+        with open(md_log_path, "r") as log_file:
+            for line in log_file:
+                # Check if the current line indicates the start of energy data
+                if line.strip().startswith("Energies (kJ/mol)"):
+                    capture = True
+                    continue
+
+                # Check if capturing has ended based on a blank line following energy data
+                if capture and line.strip() == "":
+                    capture = False
+                    calculation_output.add_data(spe=[frame_energies[0]], unit="kj/mol")
+                    energies.append(frame_energies)
+                    frame_energies = []
+                    continue
+
+                if line.strip().startswith("Bond") or line.strip().startswith("Potential"):
+                    continue
+
+                # If currently capturing energy data, process and store it
+                if capture:
+                    splitted = [float(energy_str) for energy_str in line.strip().split()]
+                    frame_energies.extend(splitted)
+
+        return calculation_output
 
 
 def build_exports_string(input_string):
@@ -537,3 +584,74 @@ def build_modules_string(input_string):
         modules_string += f"module load {module.strip()} && "
 
     return modules_string
+
+
+@dataclass
+class CalculationOutput:
+    name: str
+    unit: str
+    spe: Optional[List[float]] = field(default_factory=list)
+    lj: Optional[List[float]] = field(default_factory=list)
+    coul: Optional[List[float]] = field(default_factory=list)
+    bond: Optional[List[float]] = field(default_factory=list)
+    angle: Optional[List[float]] = field(default_factory=list)
+    dihed: Optional[List[float]] = field(default_factory=list)
+
+    supported_units = ["hartree", "kj/mol", "kcal/mol"]
+
+    def __post_init__(self):
+        self._check_unit(self.unit.lower())
+
+        # Iterate through all the attributes of the instance
+        for attr in self.__annotations__:
+            # Ensure the attribute is a list before trying to extend it
+            if isinstance(getattr(self, attr), list):
+                converted_energies = self.convert_to_kcalmol(getattr(self, attr, []), unit=self.unit)
+                setattr(self, attr, converted_energies)
+
+        self.unit = "kcal/mol"
+
+    def add_data(self, unit, spe=None, lj=None, coul=None, bond=None, angle=None, dihed=None):
+        self._check_unit(unit)
+        # Capture the function's local variables early in the execution
+        local_args = locals()
+
+        # Dictionary to map argument names to class attributes
+        arg_to_attr_map = {
+            "spe": self.spe,
+            "lj": self.lj,
+            "coul": self.coul,
+            "bond": self.bond,
+            "angle": self.angle,
+            "dihed": self.dihed,
+        }
+
+        # Iterate through each expected argument name and its values
+        for arg, values in local_args.items():
+            if arg != "self" and values is not None:
+                attr_list = arg_to_attr_map.get(arg)
+                if attr_list is not None:
+                    converted_energies = self.convert_to_kcalmol(local_args[arg], unit=unit)
+                    getattr(self, arg).extend(converted_energies)
+
+    def merge_with(self, other):
+        if not isinstance(other, CalculationOutput):
+            raise ValueError("Can only merge with another CalculationOutput instance.")
+        # Iterate through all the attributes of the instance
+        for attr in self.__annotations__:
+            # Ensure the attribute is a list before trying to extend it
+            if isinstance(getattr(self, attr), list):
+                energies_other = self.convert_to_kcalmol(getattr(other, attr, []), unit=other.unit)
+                getattr(self, attr).extend(energies_other)
+
+    def convert_to_kcalmol(self, energies: List, unit: str) -> List:
+        if unit.lower() == "kcal/mol":
+            return energies
+        elif unit.lower() == "hartree":
+            return [element * 627.503 for element in energies]
+        elif unit.lower() == "kj/mol":
+            return [element * 0.239001 for element in energies]
+
+    def _check_unit(self, unit):
+        if not any([unit == supported_unit for supported_unit in self.supported_units]):
+            raise ValueError(f"Provided unit should be one of the following {self.supported_units}")

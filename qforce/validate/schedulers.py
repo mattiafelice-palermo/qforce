@@ -91,7 +91,8 @@ class SystemScheduler(SchedulerABC):
         while self._pending_jobs:
             job = self._pending_jobs.pop()  # Defaults to -1, removing the last item
             job.run()
-            job.postprocess()
+            results = job.postprocess()
+            print(results)
             self._completed_jobs.append(job)
 
 
@@ -119,12 +120,10 @@ class SlurmScheduler(SchedulerABC):
             job_id = subprocess.run(
                 "sbatch submit_job.slm | awk '{print $4}'", cwd=job_dir, shell=True, capture_output=True, text=True
             )
-            print(job_id)
             job_ids.append(job_id.stdout.strip("\n"))
 
         job_string = ":".join([f"{job_id}" for job_id in job_ids])
 
-        print(job_string)
         dummy_job = subprocess.run(f"sbatch --wait --dependency=afterany:{job_string} --wrap='sleep 1'", shell=True)
 
         # Once completed, move the jobs out of the pending job list
@@ -219,12 +218,10 @@ class PbsScheduler(SchedulerABC):
             job_id = subprocess.run(
                 "qsub submit_job.pbs", cwd=job_dir, shell=True, capture_output=True, text=True, check=True
             )
-            print(job_id)
             job_ids.append(job_id.stdout.strip("\n"))
 
         job_string = ":".join([f"{job_id}" for job_id in job_ids])
 
-        print(job_string)
         dummy_job = subprocess.run(f"echo 'done' | qsub -W block=True,depend=afterany:{job_string}", shell=True)
 
         # Once completed, move the jobs out of the pending job list
