@@ -164,7 +164,8 @@ class GromacsAnnealing(AnnealerABC):
         self.queue = settings.annealing.annealer.queue
         self.launch_command = "bash launch.sh"
         self.conda_environment = settings.annealing.annealer.conda_environment
-        settings.general.number_of_structures += 1
+        self.name = "GromacsAnnealing"
+        # settings.general.number_of_structures += 1
 
         # Manage number of threads and custom gromacs flags
         if self.settings.annealing.annealer.threads == -1:
@@ -231,13 +232,20 @@ class GromacsAnnealing(AnnealerABC):
         else:
             custom_mdrun_flags = self.settings.annealing.annealer.custom_mdrun_flags
 
+        box_vectors = self.settings.general.box_vectors.box_vectors
+
         # Write the composed script to the launch.sh file
         with open(script_path, "w") as script_handle:
             script_handle.write("#!/bin/sh\n\n")
             for directive in self.settings.annealing.annealer.custom_directives.split(";"):
                 script_handle.write(directive + "\n")
+
             script_handle.write(
-                f"gmx grompp -f annealing.mdp -c {structure_file} -p {topology_file} -o annealing {custom_grompp_flags} > grompp.out 2> grompp.err\n"
+                f"gmx editconf -f {structure_file} -o molecule.gro -box {box_vectors[0]} {box_vectors[1]} {box_vectors[2]} > editconf.out 2> editconf.err\n"
+            )
+
+            script_handle.write(
+                f"gmx grompp -f annealing.mdp -c molecule.gro -p {topology_file} -o annealing {custom_grompp_flags} > grompp.out 2> grompp.err\n"
             )
 
             script_handle.write(
@@ -247,7 +255,11 @@ class GromacsAnnealing(AnnealerABC):
             # script_handle.write(f"echo 9 |  {gromacs_executable} energy -f annealing.edr -o annealing")
 
             script_handle.write(
-                f"echo 0 | {gromacs_executable} trjconv -f annealing.trr -s annealing.tpr -o annealing.pdb > trjconv.out 2> trjconv.err\n"
+                f"echo 0 | {gromacs_executable} trjconv -pbc whole -f annealing.trr -s annealing.tpr -o annealing.xtc > trjconv.out 2> trjconv.err\n"
+            )
+
+            script_handle.write(
+                f"echo 0 0 | {gromacs_executable} trjconv -pbc mol -center -f annealing.xtc -s annealing.tpr -o annealing.pdb >> trjconv.out 2>> trjconv.err\n"
             )
 
     def _generate_input_files(self) -> None:
@@ -277,18 +289,24 @@ class GromacsAnnealing(AnnealerABC):
     def _update_system_mdp_file(self) -> None:
         """Update the system MDP file with correct settings."""
         trj_frequency = int(self.n_steps / self.n_configs)
+
+        # -1 takes into account that the intial config is added to the trajectory (I think...)
+        steps = trj_frequency * (self.n_configs - 1)
+
         # If user mistakenly specified gromacs keys related to annealing, remove them
         replacements = {
-            "nsteps =": "nsteps".ljust(24) + "= " + f"{self.n_steps}",
+            "nsteps =": "nsteps".ljust(24) + "= " + f"{steps}",
             "dt =": "dt".ljust(24) + "= " + f"{self.dt}",
             "nstxout =": "nstxout".ljust(24) + "= " + f"{trj_frequency}",
             "nstenergy =": "nstenergy".ljust(24) + "= " + f"{trj_frequency}",
+            "nstcalcenergy =": "1",
             "annealing =": "",
             "annealing_npoints =": "",
             "annealing_temp =": "",
             "annealing_time =": "",
             "gen-vel =": "",
             "gen-temp =": "",
+            # "comm-mode =": "comm-mode = angular",
         }
 
         system_mdp_lines = []
@@ -328,7 +346,12 @@ class GromacsAnnealing(AnnealerABC):
         if not dry_run:
             try:
                 # TODO: launch command should be taken from the generator attribute
-                mdrun = subprocess.Popen(["bash", "launch.sh"], cwd=self.generator_folder)
+                mdrun = subprocess.Popen(
+                    ["bash", "launch.sh"],
+                    cwd=self.generator_folder,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                )
 
                 mdrun.wait()
             except Exception as e:

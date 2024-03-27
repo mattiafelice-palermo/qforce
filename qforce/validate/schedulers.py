@@ -88,12 +88,14 @@ class SystemScheduler(SchedulerABC):
     """Just instruct generators and resamplers to write input files and launch scripts to disk."""
 
     def execute(self):
+        results = []
         while self._pending_jobs:
             job = self._pending_jobs.pop()  # Defaults to -1, removing the last item
             job.run()
-            results = job.postprocess()
-            print(results)
+            result = job.postprocess()
+            results.append(result)
             self._completed_jobs.append(job)
+        return results
 
 
 class SlurmScheduler(SchedulerABC):
@@ -200,13 +202,7 @@ class PbsScheduler(SchedulerABC):
 
     def execute(self):
         job_ids = []
-
-        # if not all([job.queue for job in self._pending_jobs]):
-        #     # TODO: provide a more specific error pointing to which job is lacking a queue
-        #     raise ValueError(
-        #         "Jobs are missing a work queue."
-        #         "Please make sure that all generators and calculators have a set work queue when using the PBS scheduler"
-        #     )
+        results = []
 
         for job in self._pending_jobs:
             job.run(dry_run=True)
@@ -215,18 +211,31 @@ class PbsScheduler(SchedulerABC):
             with open(os.path.join(job_dir, "submit_job.pbs"), "w") as pbs_file_handle:
                 pbs_file_handle.write(self._pbs_script_content(job))
 
-            job_id = subprocess.run(
-                "qsub submit_job.pbs", cwd=job_dir, shell=True, capture_output=True, text=True, check=True
-            )
+            try:
+                job_id = subprocess.run(
+                    "qsub submit_job.pbs", cwd=job_dir, shell=True, capture_output=True, text=True, check=True
+                )
+            except Exception as e:
+                print(f"Error submitting job from {pbs_file_handle.name}. Command output:")
+                # print(f"STDOUT: {e.stdout}")
+                # print(f"STDERR: {e.stderr}")
+                raise RuntimeError(e.stderr)
+
+            # TODO: maybe put a check if the file *.pbs.eXXXXX contains an error message to halt the program?
             job_ids.append(job_id.stdout.strip("\n"))
 
         job_string = ":".join([f"{job_id}" for job_id in job_ids])
 
-        dummy_job = subprocess.run(f"echo 'done' | qsub -W block=True,depend=afterany:{job_string}", shell=True)
+        dummy_job = subprocess.run(f"echo | qsub -W block=True -W depend=afterany:{job_string}", shell=True)
 
         # Once completed, move the jobs out of the pending job list
         while self._pending_jobs:
-            self._completed_jobs.append(self._pending_jobs.pop())
+            job = self._pending_jobs.pop()
+            result = job.postprocess()
+            results.append(result)
+            self._completed_jobs.append(job)
+
+        return results
 
     def _pbs_script_content(self, job):
 
@@ -279,7 +288,7 @@ class PbsScheduler(SchedulerABC):
             #PBS -l nodes=1:ppn={job.total_threads}
             {queue_string}
             {job_memory_string}
-            ##PBS -N {self.settings.general.calculator}         # name of your job.
+            ##PBS -N {job.name}         # name of your job.
             
             set -e
 

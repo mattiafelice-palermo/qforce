@@ -13,6 +13,7 @@ from .calculators import get_calculators, get_calculator_class
 from .archive import split_pdb_to_xyz
 from .schedulers import SchedulerABC, get_scheduler
 from .misc import get_fullpath, GroBoxEditor
+from .analysis import plot_correlation
 from pprint import pprint
 
 import re
@@ -62,13 +63,19 @@ def run_validator(config_file):
     if generator.structures_path is None:
         raise RuntimeError("No structures to resample has been found.")
     settings.general.pool_path = os.path.join(settings.general.job_dir, "pool")
-    split_pdb_to_xyz(generator.structures_path, settings.general.pool_path)
+    xyz_files = split_pdb_to_xyz(generator.structures_path, settings.general.pool_path)
+
+    if xyz_files - 1 != settings.general.number_of_structures:
+        # print(xyz_files - 1, settings.general.number_of_structures)
+        raise RuntimeError(f"Annealing run crashed.")
 
     # 5. Create calculators and run resamplings
     calculators = get_calculators(settings)
     for calculator in calculators:
         scheduler.add(calculator)
-    scheduler.execute()
+    results = scheduler.execute()
+
+    plot_correlation(results[0], results[1])
 
     # 6. Correlate data and create plot
 
@@ -236,8 +243,6 @@ def _check_and_copy_settings_file(job_dir, config_file):
 
 
 def initialize_settings(config_file, presets=None):
-    print("Remember to call the LOGO here")
-
     job_dir = os.getcwd()
     settings_file = _check_and_copy_settings_file(job_dir, config_file)
 

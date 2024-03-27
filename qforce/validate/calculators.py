@@ -1,6 +1,7 @@
 from colt import Colt
 from .misc import get_fullpath
-from .archive import extract_energies
+
+# from .archive import extract_energies
 
 from abc import ABC, abstractmethod
 import shutil
@@ -8,10 +9,12 @@ import os
 import textwrap
 import subprocess
 import inspect
+import re
 
 
 from dataclasses import dataclass, field
 from typing import List, Optional
+from pprint import pprint
 
 
 def get_calculators(settings):
@@ -140,6 +143,7 @@ class Orca(CalculatorABC, Colt):
         self.calculator_folder = os.path.join(self.settings.general.job_dir, job_string).replace("::", "__")
         self.launch_command = "python dispatcher.py"
         self.job_dir = self.calculator_folder  # just for the schedulers
+        self.job_id = job_string
 
     def run(self, dry_run=False):
         self._setup_working_folder()
@@ -215,8 +219,6 @@ class Orca(CalculatorABC, Colt):
 
             result = subprocess.run(f'{modules_string}{exports_string} $(which orca) {{filename}}.inp > {{filename}}.out 2> {{filename}}.err', shell=True, cwd=folder_path, check=True)
 
-            print(result)
-
             return result.stdout
 
         def create_directory(folder):
@@ -232,11 +234,6 @@ class Orca(CalculatorABC, Colt):
 
         dispatcher = jd.JobDispatcher(jobs, maxcores={self.total_threads}, engine="multiprocessing")
         results = dispatcher.run()
-
-        # Writing the outputs to a file
-        with open("orca_outputs.txt", "w") as outfile:
-            for result in results.values():
-                outfile.write(result)
         """
         )
 
@@ -262,6 +259,7 @@ class Orca(CalculatorABC, Colt):
 
     def postprocess(self):
         energies = []
+        ids = []
         for molecule_index in range(1, self.settings.general.number_of_structures + 1):
             with open(
                 os.path.join(self.calculator_folder, f"molecule_{molecule_index}/molecule_{molecule_index}.out"), "r"
@@ -269,8 +267,13 @@ class Orca(CalculatorABC, Colt):
                 for line in file_handle:
                     if "FINAL SINGLE POINT ENERGY" in line:
                         energies.append(float(line.split()[4]))
+                        ids.append(molecule_index)
+                        break
+                else:
+                    energies.append(None)
+                    ids.append(str(molecule_index) + "_failed")
 
-        calculation_output = CalculationOutput(name=self.calculator_folder, unit="Hartree", spe=energies)
+        calculation_output = CalculationOutput(name=self.job_id, unit="Hartree", spe=energies, ids=ids)
 
         return calculation_output
 
@@ -337,8 +340,13 @@ class Gromacs(CalculatorABC, Colt):
         self.calculator_folder = os.path.join(self.settings.general.job_dir, job_string).replace("::", "__")
         self.launch_command = "python dispatcher.py"
         self.job_dir = self.calculator_folder  # just for the schedulers
-        self.number_of_batches = self.total_threads // self.single_calculation_threads
+        num_available_threads = self.total_threads // self.single_calculation_threads
+        self.number_of_batches = min(num_available_threads, self.settings.general.number_of_structures)
         self.structures_per_batch = self.settings.general.number_of_structures // self.number_of_batches
+
+        self.structures_per_batch = 1 if self.structures_per_batch == 0 else self.structures_per_batch
+
+        self.job_id = job_string
 
     def run(self, dry_run=False):
         self._setup_working_folder()
@@ -413,6 +421,8 @@ class Gromacs(CalculatorABC, Colt):
         def generate_gro_file(batch_number, folder_path):
             initial_molecule_id = 1+{structures_per_batch}*(batch_number-1)
             final_molecule_id = initial_molecule_id + {structures_per_batch}
+            if batch_number == {number_of_batches}:
+                final_molecule_id = {self.settings.general.number_of_structures}+1
             batchfile_path = os.path.join(folder_path, f"batch_{{batch_number}}.gro")
 
             with open(batchfile_path, 'w') as gro_file:
@@ -443,28 +453,20 @@ class Gromacs(CalculatorABC, Colt):
 
         dispatcher = jd.JobDispatcher(jobs, maxcores={self.total_threads}, engine="multiprocessing")
         results = dispatcher.run()
-
-        # # Writing the outputs to a file
-        # with open("orca_outputs.txt", "w") as outfile:
-        #     for result in results.values():
-        #         outfile.write(result)
         """
         )
 
     def postprocess(self):
-        energies = CalculationOutput(name=self.calculator_folder, unit="kJ/mol")
+        energies = CalculationOutput(name=self.job_id, unit="kJ/mol")
 
         for batch_number in range(1, self.number_of_batches + 1):
+            initial_molecule_id = 1 + self.structures_per_batch * (batch_number - 1)
             batchfile_path = os.path.join(self.calculator_folder, f"batch_{batch_number}")
-            energies.merge_with(self.extract_energies(os.path.join(batchfile_path, "md.log")))
+            energies.merge_with(self._extract_energies(os.path.join(batchfile_path, "md.log"), initial_molecule_id))
 
         return energies
-        # batch_number = 1
-        # for i in range(1, self.settings.general.number_of_structures):
-        #     threshold = batch_number * (self.structures_per_batch / self.settings.general.number_of_structures)
-        #     if (i/self.settings.general.number_of_structures) < threshold:
 
-    def extract_energies(self, md_log_path):
+    def _extract_energies(self, md_log_path, initial_molecule_id):
         """
         Extracts energy information from a GROMACS md.log file and writes the formatted data to an output file.
 
@@ -477,24 +479,70 @@ class Gromacs(CalculatorABC, Colt):
         frame_energies = []
         energies = []
 
-        calculation_output = CalculationOutput(name=f"Energies from {md_log_path}", unit="kJ/mol")
+        headers = [
+            "Bond",
+            "U-B",
+            "Angle",
+            "Ryckaert-Bell.",
+            "Improper Dih.",
+            "LJ-14",
+            "Coulomb-14",
+            "LJ (SR)",
+            "Coulomb (SR)",
+            "Coul. recip.",
+            "Potential",
+            "Kinetic En.",
+            "Total Energy",
+            "Conserved En.",
+            "Temperature",
+            "Pressure (bar)",
+            "Constr. rmsd",
+        ]
+
+        calculation_output = CalculationOutput(name=f"{self.job_id}", unit="kJ/mol")
 
         with open(md_log_path, "r") as log_file:
+            header_read = None
+            header_line = ""
+            potential_energy_index = None
+
+            # The current parsing logic is a bit clunky... but it will do until a better solution is found
             for line in log_file:
                 # Check if the current line indicates the start of energy data
                 if line.strip().startswith("Energies (kJ/mol)"):
+                    initial_molecule_id += 1
+                    if header_read is None:
+                        header_read = "ongoing"
                     capture = True
                     continue
 
                 # Check if capturing has ended based on a blank line following energy data
                 if capture and line.strip() == "":
+                    # Stop capturing data and header (the latter just in the first cycle)
                     capture = False
-                    calculation_output.add_data(spe=[frame_energies[0]], unit="kj/mol")
+
+                    if header_read == "ongoing":
+                        header_read = "done"
+
+                        counter = 0
+                        for header in headers:
+                            if header == "Potential":
+                                break
+                            if header in header_line:
+                                counter += 1
+
+                    calculation_output.add_data(
+                        spe=[frame_energies[counter]], unit="kj/mol", ids=[initial_molecule_id - 1]
+                    )
                     energies.append(frame_energies)
                     frame_energies = []
                     continue
 
-                if line.strip().startswith("Bond") or line.strip().startswith("Potential"):
+                # regex pattern matchin any strring containing at least one number in scientific notation
+                sn_pattern = re.compile(r"[+-]?\b\d+(\.\d*)?[eE][+-]?\d+\b")
+                if not sn_pattern.search(line):
+                    if header_read == "ongoing":
+                        header_line += line.strip() + " "
                     continue
 
                 # If currently capturing energy data, process and store it
@@ -590,6 +638,7 @@ def build_modules_string(input_string):
 class CalculationOutput:
     name: str
     unit: str
+    ids: Optional[List] = field(default_factory=list)
     spe: Optional[List[float]] = field(default_factory=list)
     lj: Optional[List[float]] = field(default_factory=list)
     coul: Optional[List[float]] = field(default_factory=list)
@@ -604,6 +653,8 @@ class CalculationOutput:
 
         # Iterate through all the attributes of the instance
         for attr in self.__annotations__:
+            if attr == "ids":
+                continue
             # Ensure the attribute is a list before trying to extend it
             if isinstance(getattr(self, attr), list):
                 converted_energies = self.convert_to_kcalmol(getattr(self, attr, []), unit=self.unit)
@@ -611,7 +662,7 @@ class CalculationOutput:
 
         self.unit = "kcal/mol"
 
-    def add_data(self, unit, spe=None, lj=None, coul=None, bond=None, angle=None, dihed=None):
+    def add_data(self, unit, ids, spe=None, lj=None, coul=None, bond=None, angle=None, dihed=None):
         self._check_unit(unit)
         # Capture the function's local variables early in the execution
         local_args = locals()
@@ -626,6 +677,14 @@ class CalculationOutput:
             "dihed": self.dihed,
         }
 
+        # Check if provided ids are already preset in the CalculationOutput object. If yes, throw an error
+        for id in ids:
+            if id in self.ids:
+                raise ValueError(f"Energy ID {id} is already present in the CalculationOutput {self.name} object.")
+
+        if not all(len(arg) == len(ids) for arg in [spe, lj, coul, bond, angle, dihed] if arg is not None):
+            raise ValueError(f"Length of the provided energy arrays is not the same as the ids.")
+
         # Iterate through each expected argument name and its values
         for arg, values in local_args.items():
             if arg != "self" and values is not None:
@@ -634,9 +693,18 @@ class CalculationOutput:
                     converted_energies = self.convert_to_kcalmol(local_args[arg], unit=unit)
                     getattr(self, arg).extend(converted_energies)
 
+        self.ids.extend(ids)
+
     def merge_with(self, other):
         if not isinstance(other, CalculationOutput):
             raise ValueError("Can only merge with another CalculationOutput instance.")
+
+        for other_id in other.ids:
+            if other_id in self.ids:
+                raise ValueError(
+                    f"Energy ID {other_id} of CalculationOutput {other.name} is already present in the CalculationOutput {self.name} object."
+                )
+
         # Iterate through all the attributes of the instance
         for attr in self.__annotations__:
             # Ensure the attribute is a list before trying to extend it
@@ -644,13 +712,16 @@ class CalculationOutput:
                 energies_other = self.convert_to_kcalmol(getattr(other, attr, []), unit=other.unit)
                 getattr(self, attr).extend(energies_other)
 
+        # self.ids.extend(other.ids)
+
     def convert_to_kcalmol(self, energies: List, unit: str) -> List:
+        # If some provided elements are "None" as a result of a failed calculation, leave them untouched
         if unit.lower() == "kcal/mol":
             return energies
         elif unit.lower() == "hartree":
-            return [element * 627.503 for element in energies]
+            return [None if element is None else element * 627.503 for element in energies]
         elif unit.lower() == "kj/mol":
-            return [element * 0.239001 for element in energies]
+            return [None if element is None else element * 0.239001 for element in energies]
 
     def _check_unit(self, unit):
         if not any([unit == supported_unit for supported_unit in self.supported_units]):

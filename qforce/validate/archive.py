@@ -36,6 +36,9 @@ def split_pdb_to_xyz(pdb_file_path, destination_folder_path):
     else:
         print("Failed to read the PDB file.")
 
+    print(i)
+    return i
+
 
 def count_xyz_files_in_folder(folder_path: str) -> int:
     """
@@ -55,40 +58,3 @@ def count_xyz_files_in_folder(folder_path: str) -> int:
     ]
 
     return len(xyz_files)
-
-
-def extract_energies(md_log_path):
-    """
-    Extracts energy information from a GROMACS md.log file and writes the formatted data to an output file.
-
-    Parameters:
-    md_log_path (str): The path to the md.log file.
-    output_path (str): The path to the output file where the formatted energy information will be written.
-    """
-    # Flag to start capturing energy data
-    capture = False
-    frame_energies = []
-    energies = []
-
-    with open(md_log_path, "r") as log_file:
-        for line in log_file:
-            # Check if the current line indicates the start of energy data
-            if line.strip().startswith("Energies (kJ/mol)"):
-                capture = True
-                continue
-
-            # Check if capturing has ended based on a blank line following energy data
-            if capture and line.strip() == "":
-                capture = False
-                energies.append(frame_energies)
-                frame_energies = []
-                continue
-
-            if line.strip().startswith("Bond") or line.strip().startswith("Potential"):
-                continue
-
-            # If currently capturing energy data, process and store it
-            if capture:
-                splitted = line.strip().split()
-                frame_energies.extend(splitted)
-    return energies
