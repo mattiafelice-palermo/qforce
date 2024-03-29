@@ -1,4 +1,9 @@
 import os
+import logging
+from datetime import datetime
+import traceback
+import yaml
+import textwrap
 
 # =======================================================================================
 # MISC.PY - Miscellaneous Utilities
@@ -156,4 +161,111 @@ def remove_quotes(input_str):
 
 # ==============================================================================
 # END OF PATH STRING MANIPULATION FUNCTIONS
+# ==============================================================================
+
+# ==============================================================================
+# LOGGING FORMATTER
+# ==============================================================================
+# This section contains the class definition for the YAML formatter for the
+# logging facility.
+# ==============================================================================
+
+
+class EnhancedYamlFormatter(logging.Formatter):
+    last_timestamp = ""
+    timestamp_counter = 0
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        yaml.add_representer(str, self.representer_multiline_str, Dumper=yaml.SafeDumper)
+
+    @staticmethod
+    def representer_multiline_str(dumper, data):
+        if "\n" in data:
+            return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
+        return dumper.represent_scalar("tag:yaml.org,2002:str", data)
+
+    def format(self, record):
+        timestamp_format = "%Y-%m-%d %H:%M:%S"
+        formatted_timestamp = datetime.utcfromtimestamp(record.created).strftime(timestamp_format)
+
+        # Check if this timestamp is the same as the last one
+        if formatted_timestamp == self.last_timestamp:
+            self.timestamp_counter += 1
+        else:
+            self.last_timestamp = formatted_timestamp
+            self.timestamp_counter = 1  # Reset counter for new timestamp
+
+        # Append the counter to the timestamp to make it unique
+        unique_timestamp = f"{formatted_timestamp}.{self.timestamp_counter}"
+
+        structured_log = {
+            "time": unique_timestamp,
+            "level": record.levelname,
+            "line": record.lineno,
+            "function": record.funcName,
+            "file": record.filename,
+            "message": record.getMessage(),
+        }
+
+        if record.exc_info:
+            tb_list = traceback.format_exception(*record.exc_info)
+            indented_tb = textwrap.indent("".join(tb_list), prefix="    ")
+            structured_log["exception"] = indented_tb
+
+        log_entry = {unique_timestamp: structured_log}
+
+        return yaml.dump(log_entry, Dumper=yaml.SafeDumper, default_flow_style=False, sort_keys=False)
+
+
+# class EnhancedYamlFormatter(logging.Formatter):
+#     def format(self, record):
+#         # Create a structured log record
+#         structured_log = {
+#             "time": datetime.utcfromtimestamp(record.created).strftime("%Y-%m-%d %H:%M:%S"),
+#             "level": record.levelname,
+#             "line": record.lineno,
+#             "function": record.funcName,
+#             "file": record.filename,
+#             "message": record.getMessage(),  # Gets the log message
+#         }
+
+#         # Check if exception information is included
+#         if record.exc_info:
+#             # Extract traceback as a string
+#             tb_str = traceback.format_exception(*record.exc_info)
+#             # Indent each line for YAML formatting
+#             indented_tb = textwrap.indent("".join(tb_str), "    ")
+#             structured_log["exception"] = "".join(indented_tb)
+
+#         # Create a parent key based on the log creation time to maintain hierarchy
+#         parent_key = datetime.utcfromtimestamp(record.created).strftime("%Y-%m-%d %H:%M:%S")
+#         log_entry = {parent_key: structured_log}
+
+#         # Return the YAML representation of the log entry
+#         return yaml.dump(log_entry, default_flow_style=False, sort_keys=False, allow_unicode=True)
+
+
+# class EnhancedYamlFormatter(logging.Formatter):
+#     def format(self, record):
+#         # Create a dictionary with only the desired information
+#         structured_log = {
+#             "time": datetime.fromtimestamp(record.created).strftime("%Y-%m-%d %H:%M:%S"),
+#             "level": record.levelname,
+#             "line": record.lineno,
+#             "function": record.funcName,
+#             "file": record.filename,
+#             "message": record.msg,
+#         }
+
+#         # Create a parent key based on the log creation time to maintain hierarchy
+#         parent_key = datetime.fromtimestamp(record.created).strftime("%Y-%m-%d %H:%M:%S")
+#         log_entry = {parent_key: structured_log}
+
+#         # Return the YAML representation of the log entry
+#         return yaml.dump(log_entry, default_flow_style=False, sort_keys=False)
+
+
+# ==============================================================================
+# END OF LOGGING FORMATTER CLASS DEFINITION
 # ==============================================================================

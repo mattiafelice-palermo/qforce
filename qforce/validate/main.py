@@ -2,6 +2,8 @@
 import os
 from types import SimpleNamespace
 import shutil
+import logging
+
 
 # Related third-party imports
 import pkg_resources
@@ -12,11 +14,19 @@ from .generators import AnnealerABC, _implemented_generators, _implemented_annea
 from .calculators import get_calculators, get_calculator_class
 from .archive import split_pdb_to_xyz
 from .schedulers import SchedulerABC, get_scheduler
-from .misc import get_fullpath, GroBoxEditor
+from .misc import get_fullpath, GroBoxEditor, EnhancedYamlFormatter
 from .analysis import plot_correlation
 from pprint import pprint
 
 import re
+
+# Setting up logging with the enhanced YAML formatter
+logger = logging.getLogger("yamlLogger")
+handler = logging.StreamHandler()
+formatter = EnhancedYamlFormatter()
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+logger.setLevel(logging.DEBUG)
 
 
 def check_if_file_exists(filename):
@@ -44,6 +54,7 @@ config_file = :: file, optional, alias=o
     },
 )
 
+
 # Entry point for the qforce-validate routine
 def run_validator(config_file):
     # 1. Read settings from the user provided file
@@ -51,10 +62,17 @@ def run_validator(config_file):
 
     # 2. Create scheduler
     scheduler = get_scheduler(settings)
+    logger.debug(f"Chose scheduler is: {type(scheduler)}")
+
+    try:
+        result = 1 / 0
+    except Exception as e:
+        logger.exception(e)
 
     # 3. Create generator and run it through the scheduler
     # TODO: allow for multiple generators run
     generator = get_generator(settings)
+    logger.debug(f"Chose generator is: {type(generator)}")
     scheduler.add(generator)
     scheduler.execute()
 
@@ -209,26 +227,26 @@ shell = bash :: str, optional :: [bash, sh, zsh]
         return out
 
 
-def _get_job_info(filename):
-    job = {}
-    filename = filename.rstrip("/")
-    base = os.path.basename(filename)
-    path = os.path.dirname(filename)
-    if path != "":
-        path = f"{path}/"
+# def _get_job_info(filename):
+#     job = {}
+#     filename = filename.rstrip("/")
+#     base = os.path.basename(filename)
+#     path = os.path.dirname(filename)
+#     if path != "":
+#         path = f"{path}/"
 
-    if os.path.isfile(filename):
-        job["coord_file"] = filename
-        job["name"] = base.split(".")[0]
-    else:
-        job["coord_file"] = False
-        job["name"] = base.split("_qforce")[0]
+#     if os.path.isfile(filename):
+#         job["coord_file"] = filename
+#         job["name"] = base.split(".")[0]
+#     else:
+#         job["coord_file"] = False
+#         job["name"] = base.split("_qforce")[0]
 
-    job["dir"] = f'{path}{job["name"]}_qforce'
-    job["frag_dir"] = f'{job["dir"]}/fragments'
-    job["md_data"] = pkg_resources.resource_filename("qforce", "data")
-    os.makedirs(job["dir"], exist_ok=True)
-    return SimpleNamespace(**job)
+#     job["dir"] = f'{path}{job["name"]}_qforce'
+#     job["frag_dir"] = f'{job["dir"]}/fragments'
+#     job["md_data"] = pkg_resources.resource_filename("qforce", "data")
+#     os.makedirs(job["dir"], exist_ok=True)
+#     return SimpleNamespace(**job)
 
 
 def _check_and_copy_settings_file(job_dir, config_file):
@@ -238,6 +256,8 @@ def _check_and_copy_settings_file(job_dir, config_file):
     """
 
     settings_file = os.path.join(job_dir, ".settings.parsed.ini")
+    logger.debug(f"Copying settings file in '{settings_file}'")
+
     shutil.copy2(config_file, settings_file)
 
     return settings_file
@@ -248,6 +268,7 @@ def initialize_settings(config_file, presets=None):
     settings_file = _check_and_copy_settings_file(job_dir, config_file)
 
     settings = GeneralSettings.from_questions(config=settings_file, presets=presets, check_only=True)
+
     settings.general.job_dir = job_dir
 
     return settings
