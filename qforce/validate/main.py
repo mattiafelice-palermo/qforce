@@ -73,6 +73,7 @@ def run_validator(config_file):
     calculators = get_calculators(settings)
     for calculator in calculators:
         scheduler.add(calculator)
+
     results = scheduler.execute()
 
     plot_correlation(results[0], results[1])

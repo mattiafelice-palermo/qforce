@@ -4,16 +4,13 @@ import plotly.io as pio
 import pandas as pd
 
 
-def plot_correlation(qm_output, md_output):
+def plot_correlation(md_output, qm_output):
     common_configurations = list(set(qm_output.ids).intersection(md_output.ids))
     discarded_configurations = set(qm_output.ids) - set(md_output.ids)
-
-    print(discarded_configurations)
 
     qm_energies = np.array([qm_output.spe[config - 1] for config in common_configurations])
     md_energies = np.array([md_output.spe[config - 1] for config in common_configurations])
 
-    print(common_configurations, qm_energies, md_energies)
     # print(qm_energies)
     # print(md_energies)
     # qm_energies = np.array(qm_energies)

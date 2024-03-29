@@ -128,6 +128,9 @@ class Orca(CalculatorABC, Colt):
     #
     conda_environment = ::str, optional
 
+    #
+    mpi_flags = ::str, optional
+
     """
 
     def __init__(self, job_string, settings):
@@ -217,7 +220,7 @@ class Orca(CalculatorABC, Colt):
             xyz_path = os.path.join("{self.settings.general.pool_path}", f"{{filename}}.xyz")
             subprocess.run(f"sed -i 's#FILENAME#{{xyz_path}}#g' {{filename}}.inp", shell=True, cwd=folder_path, check=True)
 
-            result = subprocess.run(f'{modules_string}{exports_string} $(which orca) {{filename}}.inp > {{filename}}.out 2> {{filename}}.err', shell=True, cwd=folder_path, check=True)
+            result = subprocess.run(f'{modules_string}{exports_string} $(which orca) {{filename}}.inp "{self.mpi_flags}" > {{filename}}.out 2> {{filename}}.err', shell=True, cwd=folder_path, check=True)
 
             return result.stdout
 
@@ -247,10 +250,15 @@ class Orca(CalculatorABC, Colt):
         else:
             pal_string = ""
 
+        single_calc_memory = int(
+            self.total_memory / self.total_threads * 750
+        )  # in Megabytes (75% of requested as per orca manual)
+
         template_string = textwrap.dedent(
             f"""
         ! {self.method} {pal_string}
         * xyzfile {self.charge} {self.multiplicity} FILENAME
+        %maxcore {single_calc_memory}
         """
         )
 

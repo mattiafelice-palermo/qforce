@@ -299,7 +299,7 @@ class GromacsAnnealing(AnnealerABC):
             "dt =": "dt".ljust(24) + "= " + f"{self.dt}",
             "nstxout =": "nstxout".ljust(24) + "= " + f"{trj_frequency}",
             "nstenergy =": "nstenergy".ljust(24) + "= " + f"{trj_frequency}",
-            "nstcalcenergy =": "1",
+            "nstcalcenergy =": "nstcalcenergy = 1",
             "annealing =": "",
             "annealing_npoints =": "",
             "annealing_temp =": "",
